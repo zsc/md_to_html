@@ -31,6 +31,12 @@ class LaTeXPreprocessor(Preprocessor):
         # 2. Escape underscores in LaTeX expressions
         text = self._escape_underscores_in_latex(text)
         
+        # 3. Fix tables that need blank lines
+        text = self._fix_tables(text)
+        
+        # 4. Fix code blocks in lists
+        text = self._fix_code_blocks_in_lists(text)
+        
         return text.split('\n')
     
     def _fix_display_math(self, text):
@@ -63,6 +69,109 @@ class LaTeXPreprocessor(Preprocessor):
         text = re.sub(r'(?<!\$)\$(?!\$)([^$]+?)\$(?!\$)', escape_in_inline, text)
         
         return text
+    
+    def _fix_tables(self, text):
+        """Ensure tables have blank lines before and after them."""
+        lines = text.split('\n')
+        new_lines = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this line looks like a table separator
+            if re.match(r'^\s*\|[\s\-:|]+\|\s*$', line):
+                # Look back to find the header
+                if i > 0 and '|' in lines[i-1]:
+                    # Check if there's already a blank line before the table
+                    if i > 1 and new_lines and new_lines[-1].strip():
+                        new_lines.append('')  # Add blank line before table
+                    
+                    # Add the header
+                    if new_lines and new_lines[-1] == lines[i-1]:
+                        pass  # Already added
+                    else:
+                        new_lines.append(lines[i-1])
+                    
+                    # Add the separator
+                    new_lines.append(line)
+                    
+                    # Add table rows
+                    j = i + 1
+                    while j < len(lines) and '|' in lines[j] and lines[j].strip():
+                        new_lines.append(lines[j])
+                        j += 1
+                    
+                    # Add blank line after table if needed
+                    if j < len(lines) and lines[j].strip():
+                        new_lines.append('')
+                    
+                    i = j - 1
+                else:
+                    new_lines.append(line)
+            else:
+                new_lines.append(line)
+            
+            i += 1
+        
+        return '\n'.join(new_lines)
+    
+    def _fix_code_blocks_in_lists(self, text):
+        """Fix code blocks that are inside lists by ensuring proper indentation."""
+        lines = text.split('\n')
+        fixed_lines = []
+        i = 0
+        processed = False
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this line starts with spaces followed by ```
+            if re.match(r'^(\s+)```', line) and not processed:
+                indent_match = re.match(r'^(\s+)', line)
+                current_indent = len(indent_match.group(1))
+                
+                # For markdown, code blocks in lists need to be indented by 8 spaces (or 2 tabs)
+                # to be recognized as code blocks rather than continuation of the list item
+                if current_indent >= 4 and current_indent < 8:
+                    # This might be a code block in a list that needs more indentation
+                    # Look back to see if we're in a list context
+                    in_list_context = False
+                    for j in range(max(0, i-5), i):
+                        if re.match(r'^(\s*)[-*+\d]+[\.\)]\s+', lines[j]):
+                            in_list_context = True
+                            break
+                    
+                    if in_list_context:
+                        # We're in a list, need to indent to 8 spaces total
+                        spaces_to_add = 8 - current_indent
+                        fixed_lines.append(' ' * spaces_to_add + line)
+                        i += 1
+                        processed = True
+                        
+                        # Process code block content
+                        while i < len(lines):
+                            current_line = lines[i]
+                            # Check if this is a closing ``` with similar indentation
+                            if re.match(r'^(\s+)```\s*$', current_line):
+                                # Add proper indentation to closing ```
+                                fixed_lines.append(' ' * 8 + '```')
+                                i += 1
+                                break
+                            else:
+                                # Indent content lines
+                                if current_line.strip():
+                                    fixed_lines.append(' ' * spaces_to_add + current_line)
+                                else:
+                                    fixed_lines.append('')
+                                i += 1
+                        processed = False
+                        continue
+                
+            fixed_lines.append(line)
+            i += 1
+        
+        return '\n'.join(fixed_lines)
 
 
 class LaTeXExtension(Extension):
@@ -86,7 +195,6 @@ class MarkdownConverter:
             'extra',  # tables, fenced code blocks, etc.
             'codehilite',  # syntax highlighting
             'toc',  # table of contents
-            'nl2br',  # newline to break
             'sane_lists',  # better list handling
             LaTeXExtension(),  # our custom LaTeX handler
         ])
