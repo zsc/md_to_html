@@ -252,13 +252,19 @@ class MarkdownConverter:
         # Sort files for consistent ordering
         sorted_files = sorted(all_files)
         
+        # Find the common input directory (parent of all files)
+        input_dir = sorted_files[0].parent
+        for f in sorted_files:
+            while not f.is_relative_to(input_dir):
+                input_dir = input_dir.parent
+        
         # Build file list with titles
         for f in sorted_files:
             with open(f, 'r', encoding='utf-8') as file:
                 content = file.read()
                 title = self._extract_title(content)
                 nav['files'].append({
-                    'path': str(f.relative_to(f.parent.parent) if f.parent != f.parent.parent else f.name),
+                    'path': str(f.relative_to(input_dir)),
                     'title': title,
                     'active': f == current_file
                 })
@@ -270,7 +276,7 @@ class MarkdownConverter:
             with open(prev_file, 'r', encoding='utf-8') as f:
                 prev_title = self._extract_title(f.read())
             nav['prev'] = {
-                'path': str(prev_file.relative_to(prev_file.parent.parent) if prev_file.parent != prev_file.parent.parent else prev_file.name),
+                'path': str(prev_file.relative_to(input_dir)),
                 'title': prev_title
             }
         
@@ -279,7 +285,7 @@ class MarkdownConverter:
             with open(next_file, 'r', encoding='utf-8') as f:
                 next_title = self._extract_title(f.read())
             nav['next'] = {
-                'path': str(next_file.relative_to(next_file.parent.parent) if next_file.parent != next_file.parent.parent else next_file.name),
+                'path': str(next_file.relative_to(input_dir)),
                 'title': next_title
             }
         
