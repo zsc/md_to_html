@@ -240,6 +240,31 @@ class MarkdownConverter:
                 return line.strip()[2:].strip()
         return 'Untitled'
     
+    def _sort_files(self, files: List[Path]) -> List[Path]:
+        """Sort files with special rules for chapters and appendices."""
+        def sort_key(path: Path):
+            name = path.stem.lower()
+            
+            # Priority order: index, chapters, appendices, others
+            if name == 'index':
+                return (0, 0, name)
+            elif name.startswith('chapter'):
+                # Extract chapter number
+                try:
+                    num = int(name.replace('chapter', ''))
+                    return (1, num, name)
+                except ValueError:
+                    return (1, 999, name)
+            elif name.startswith('appendix'):
+                # Extract appendix letter/number
+                suffix = name.replace('appendix-', '').replace('appendix', '')
+                return (2, suffix, name)
+            else:
+                # Other files come last
+                return (3, 0, name)
+        
+        return sorted(files, key=sort_key)
+    
     def _build_navigation(self, current_file: Path, all_files: List[Path]) -> Dict:
         """Build navigation structure."""
         nav = {
@@ -250,7 +275,7 @@ class MarkdownConverter:
         }
         
         # Sort files for consistent ordering
-        sorted_files = sorted(all_files)
+        sorted_files = self._sort_files(all_files)
         
         # Find the common input directory (parent of all files)
         input_dir = sorted_files[0].parent
