@@ -37,6 +37,9 @@ class LaTeXPreprocessor(Preprocessor):
         # 4. Fix code blocks in lists
         text = self._fix_code_blocks_in_lists(text)
         
+        # 5. Fix lists that need blank lines
+        text = self._fix_lists(text)
+        
         return text.split('\n')
     
     def _fix_display_math(self, text):
@@ -184,6 +187,25 @@ class LaTeXPreprocessor(Preprocessor):
                 
             fixed_lines.append(line)
             i += 1
+        
+        return '\n'.join(fixed_lines)
+    
+    def _fix_lists(self, text):
+        """Ensure lists have blank lines before them."""
+        lines = text.split('\n')
+        fixed_lines = []
+        
+        for i, line in enumerate(lines):
+            # Check if this line starts a list (-, *, +, or numbered)
+            list_pattern = r'^\s*[-*+]\s+|^\s*\d+[.)]\s+'
+            
+            if re.match(list_pattern, line):
+                # Check if previous line exists and is not empty and not a list item
+                if i > 0 and fixed_lines and fixed_lines[-1].strip() and not re.match(list_pattern, fixed_lines[-1]):
+                    # Add blank line before the list
+                    fixed_lines.append('')
+            
+            fixed_lines.append(line)
         
         return '\n'.join(fixed_lines)
 
