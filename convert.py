@@ -42,9 +42,18 @@ class LaTeXPreprocessor(Preprocessor):
     def _fix_display_math(self, text):
         """Fix mismatched display math delimiters."""
         # Pattern to find display math blocks that start with $$ but end with single $
-        pattern = r'\$\$([^$]+?)\$(?!\$)'
-        text = re.sub(pattern, r'$$\1$$', text)
-        return text
+        # Make sure we're really matching display math, not inline math
+        # Look for $$ at word boundaries and ensure it's not preceded by non-whitespace
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            # Only process lines that contain $$
+            if '$$' in line:
+                # Use a more careful pattern that checks context
+                # Match $$ followed by content and ending with single $ (not $$)
+                pattern = r'(?:^|\s)\$\$([^$]+?)\$(?!\$)'
+                if re.search(pattern, line):
+                    lines[i] = re.sub(pattern, r' $$\1$$', line)
+        return '\n'.join(lines)
     
     def _escape_underscores_in_latex(self, text):
         """Escape underscores within LaTeX expressions."""
@@ -69,7 +78,9 @@ class LaTeXPreprocessor(Preprocessor):
         # Process display math first
         text = re.sub(r'\$\$(.*?)\$\$', escape_in_display, text, flags=re.DOTALL)
         # Then process inline math (avoiding display math)
-        text = re.sub(r'(?<!\$)\$(?!\$)([^$]+?)\$(?!\$)', escape_in_inline, text)
+        # Fixed: The regex was not correctly handling inline math
+        # Old pattern would miss some cases, let's use a more robust pattern
+        text = re.sub(r'(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)', escape_in_inline, text)
         
         return text
     
