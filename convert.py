@@ -31,7 +31,7 @@ class LaTeXPreprocessor(Preprocessor):
         # 2. Escape underscores in LaTeX expressions
         text = self._escape_underscores_in_latex(text)
         
-        # 3. Fix tables that need blank lines
+        # 3. Fix tables that need blank lines (including in blockquotes)
         text = self._fix_tables(text)
         
         # 4. Fix code blocks in lists
@@ -102,13 +102,19 @@ class LaTeXPreprocessor(Preprocessor):
         while i < len(lines):
             line = lines[i]
             
-            # Check if this line looks like a table separator
-            if re.match(r'^\s*\|[\s\-:|]+\|\s*$', line):
+            # Check if this line looks like a table separator (including in blockquotes)
+            if re.match(r'^(\s*>)?\s*\|[\s\-:|]+\|\s*$', line):
                 # Look back to find the header
                 if i > 0 and '|' in lines[i-1]:
+                    # Check if we're in a blockquote
+                    in_blockquote = line.strip().startswith('>')
+                    
                     # Check if there's already a blank line before the table
                     if i > 1 and new_lines and new_lines[-1].strip():
-                        new_lines.append('')  # Add blank line before table
+                        if in_blockquote and new_lines[-1].startswith('>'):
+                            new_lines.append('>')  # Add blank blockquote line
+                        else:
+                            new_lines.append('')  # Add blank line before table
                     
                     # Add the header
                     if new_lines and new_lines[-1] == lines[i-1]:
@@ -204,13 +210,22 @@ class LaTeXPreprocessor(Preprocessor):
         for i, line in enumerate(lines):
             # Check if this line starts a list (-, *, +, or numbered)
             # Also handle bold markers (**) at the beginning
-            list_pattern = r'^\s*(\*\*)?\s*[-*+]\s+|^\s*(\*\*)?\s*\d+[.)]\s+'
+            # Also handle lists in blockquotes (starting with >)
+            list_pattern = r'^(\s*>)?\s*(\*\*)?\s*[-*+]\s+|^(\s*>)?\s*(\*\*)?\s*\d+[.)]\s+'
+            
+            # Special pattern for blockquote lists
+            blockquote_list_pattern = r'^>\s*[-*+]\s+|^>\s*\d+[.)]\s+'
             
             if re.match(list_pattern, line):
                 # Check if previous line exists and is not empty and not a list item
                 if i > 0 and fixed_lines and fixed_lines[-1].strip() and not re.match(list_pattern, fixed_lines[-1]):
-                    # Add blank line before the list
-                    fixed_lines.append('')
+                    # Special handling for blockquotes
+                    if line.startswith('>') and fixed_lines[-1].startswith('>'):
+                        # Insert a blank blockquote line
+                        fixed_lines.append('>')
+                    else:
+                        # Add blank line before the list
+                        fixed_lines.append('')
             
             fixed_lines.append(line)
         
