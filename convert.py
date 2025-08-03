@@ -40,6 +40,12 @@ class LaTeXPreprocessor(Preprocessor):
         # 5. Fix lists that need blank lines
         text = self._fix_lists(text)
         
+        # 6. Convert bold numbered lists to proper list format
+        text = self._convert_bold_lists(text)
+        
+        # 7. Add markdown="1" to HTML blocks that need markdown processing
+        text = self._add_markdown_attribute(text)
+        
         return text.split('\n')
     
     def _fix_display_math(self, text):
@@ -197,7 +203,8 @@ class LaTeXPreprocessor(Preprocessor):
         
         for i, line in enumerate(lines):
             # Check if this line starts a list (-, *, +, or numbered)
-            list_pattern = r'^\s*[-*+]\s+|^\s*\d+[.)]\s+'
+            # Also handle bold markers (**) at the beginning
+            list_pattern = r'^\s*(\*\*)?\s*[-*+]\s+|^\s*(\*\*)?\s*\d+[.)]\s+'
             
             if re.match(list_pattern, line):
                 # Check if previous line exists and is not empty and not a list item
@@ -208,6 +215,45 @@ class LaTeXPreprocessor(Preprocessor):
             fixed_lines.append(line)
         
         return '\n'.join(fixed_lines)
+    
+    def _convert_bold_lists(self, text):
+        """Convert bold numbered lists to proper HTML."""
+        lines = text.split('\n')
+        fixed_lines = []
+        in_bold_list = False
+        
+        for i, line in enumerate(lines):
+            # Pattern to match bold numbered items
+            bold_pattern = r'^\s*\*\*(\d+)[.)]\s+(.+?)\*\*\s*$'
+            match = re.match(bold_pattern, line)
+            
+            if match:
+                # Found a bold numbered item
+                num = match.group(1)
+                content = match.group(2)
+                
+                # If this is the first item or previous line is blank, start new list
+                if not in_bold_list or (i > 0 and not lines[i-1].strip()):
+                    in_bold_list = True
+                
+                # Convert to numbered list with bold content
+                fixed_lines.append(f'{num}. **{content}**')
+            else:
+                # Check if we're ending a bold list
+                if in_bold_list and line.strip() and not re.match(r'^\s*[-*+]|\s*\d+[.)]', line):
+                    in_bold_list = False
+                fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
+    
+    def _add_markdown_attribute(self, text):
+        """Add markdown="1" attribute to HTML blocks that contain markdown content."""
+        # Simple approach: add markdown="1" to all details tags
+        text = re.sub(r'<details>', '<details markdown="1">', text)
+        # Also handle cases where details already has attributes
+        text = re.sub(r'<details\s+([^>]+)(?<!markdown="1")>', r'<details \1 markdown="1">', text)
+        
+        return text
 
 
 class LaTeXExtension(Extension):
@@ -232,6 +278,7 @@ class MarkdownConverter:
             'codehilite',  # syntax highlighting
             'toc',  # table of contents
             'sane_lists',  # better list handling
+            'md_in_html',  # process markdown inside HTML blocks
             LaTeXExtension(),  # our custom LaTeX handler
         ])
     
