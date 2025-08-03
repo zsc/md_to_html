@@ -51,7 +51,9 @@ class LaTeXPreprocessor(Preprocessor):
         # Handle display math $$...$$
         def escape_in_display(match):
             content = match.group(1)
-            content = content.replace('_', '\\_')
+            # Only escape underscores that aren't already escaped
+            # Replace _ with \_ but not \_ with \\_
+            content = re.sub(r'(?<!\\)_', r'\\_', content)
             return f'$${content}$$'
         
         # Handle inline math $...$
@@ -60,7 +62,8 @@ class LaTeXPreprocessor(Preprocessor):
             # Avoid matching display math that we've already processed
             if content.startswith('$'):
                 return match.group(0)
-            content = content.replace('_', '\\_')
+            # Only escape underscores that aren't already escaped
+            content = re.sub(r'(?<!\\)_', r'\\_', content)
             return f'${content}$'
         
         # Process display math first

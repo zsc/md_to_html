@@ -234,6 +234,12 @@ Here are two formulas: $a^2 + b^2$$c^2 + d^2$ should be separate.
 *Italic math*: $\mathit{f}(x) = x^2$
 ***Bold italic***: $\boldsymbol{\alpha}$
 
+### Test 16: escaped underscore
+$$q(\mathbf{x}\_t | \mathbf{x}\_{t-1}) = \mathcal{N}(\mathbf{x}\_t; \sqrt{1-\beta\_t}\mathbf{x}\_{t-1}, \beta\_t\mathbf{I})$$
+
+### Test 17: multiple inline $
+让我们仔细解析这个公式的含义。这个条件分布告诉我们，给定第 $t-1$ 步的状态 $\mathbf{x}\_{t-1}$ ，第 $t$ 步的状态 $\mathbf{x}\_t$ 是如何生成的：
+
 ## Mixed Content in Lists
 
 1. **First item** with `inline code`
