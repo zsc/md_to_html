@@ -25,28 +25,62 @@ class LaTeXPreprocessor(Preprocessor):
         text = '\n'.join(lines)
         
         # Fix common LaTeX errors
-        # 1. Handle mismatched $$ and $
+        # 1. Fix multiline display math
+        text = self._fix_multiline_display_math(text)
+        
+        # 2. Handle mismatched $$ and $
         text = self._fix_display_math(text)
         
-        # 2. Escape underscores in LaTeX expressions
+        # 3. Escape underscores in LaTeX expressions
         text = self._escape_underscores_in_latex(text)
         
-        # 3. Fix tables that need blank lines (including in blockquotes)
+        # 4. Fix tables that need blank lines (including in blockquotes)
         text = self._fix_tables(text)
         
-        # 4. Fix code blocks in lists
+        # 5. Fix code blocks in lists
         text = self._fix_code_blocks_in_lists(text)
         
-        # 5. Fix lists that need blank lines
+        # 6. Fix lists that need blank lines
         text = self._fix_lists(text)
         
-        # 6. Convert bold numbered lists to proper list format
+        # 7. Convert bold numbered lists to proper list format
         text = self._convert_bold_lists(text)
         
-        # 7. Add markdown="1" to HTML blocks that need markdown processing
+        # 8. Add markdown="1" to HTML blocks that need markdown processing
         text = self._add_markdown_attribute(text)
         
         return text.split('\n')
+    
+    def _fix_multiline_display_math(self, text):
+        """Fix display math blocks that have multiple blank lines."""
+        # First, handle cases where $$ is on its own line with content between
+        pattern1 = r'\$\$\s*\n((?:(?!\$\$)[\s\S])*?)\n\s*\$\$'
+        
+        def fix_math(match):
+            content = match.group(1)
+            # Remove excessive blank lines within the math content
+            lines = content.split('\n')
+            # Keep only non-empty lines or single blank lines
+            fixed_lines = []
+            prev_blank = False
+            for line in lines:
+                if line.strip():
+                    fixed_lines.append(line)
+                    prev_blank = False
+                elif not prev_blank:
+                    fixed_lines.append(line)
+                    prev_blank = True
+            
+            content = '\n'.join(fixed_lines).strip()
+            return f'$$\n{content}\n$$'
+        
+        text = re.sub(pattern1, fix_math, text, flags=re.MULTILINE)
+        
+        # Also handle inline $$ with content on same line but closing $$ on separate line
+        pattern2 = r'\$\$([^\$\n]+)\s*\n+\s*\$\$'
+        text = re.sub(pattern2, r'$$\1$$', text, flags=re.MULTILINE)
+        
+        return text
     
     def _fix_display_math(self, text):
         """Fix mismatched display math delimiters."""
