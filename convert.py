@@ -14,12 +14,14 @@ from typing import List, Dict, Tuple, Optional
 import shutil
 
 import markdown
-from markdown.extensions import Extension
-from markdown.preprocessors import Preprocessor
 
 
-class LaTeXPreprocessor(Preprocessor):
+class LaTeXPreprocessor:
     """Preprocessor to handle LaTeX math with tolerance for common errors."""
+    
+    def __init__(self, md=None):
+        """Initialize preprocessor (md parameter kept for compatibility)."""
+        pass
     
     def run(self, lines):
         text = '\n'.join(lines)
@@ -48,6 +50,12 @@ class LaTeXPreprocessor(Preprocessor):
         
         # 8. Add markdown="1" to HTML blocks that need markdown processing
         text = self._add_markdown_attribute(text)
+        
+        # Debug: print if preprocessor is being called
+        import os
+        if os.environ.get('DEBUG_PREPROCESSOR'):
+            print("PREPROCESSOR CALLED!")
+            print(f"First line after processing: {text.split(chr(10))[0] if text else 'EMPTY'}")
         
         return text.split('\n')
     
@@ -184,7 +192,7 @@ class LaTeXPreprocessor(Preprocessor):
         return '\n'.join(new_lines)
     
     def _fix_code_blocks_in_lists(self, text):
-        """Fix code blocks that are inside lists by adding blank lines."""
+        """Fix code blocks that are inside lists by removing leading spaces and adding blank lines."""
         lines = text.split('\n')
         fixed_lines = []
         i = 0
@@ -195,39 +203,47 @@ class LaTeXPreprocessor(Preprocessor):
             # Check if this line starts with spaces followed by ```
             if re.match(r'^(\s+)```', line):
                 indent_match = re.match(r'^(\s+)', line)
-                current_indent = len(indent_match.group(1))
+                spaces_to_remove = len(indent_match.group(1))
                 
                 # Check if we're in a list context by looking back
                 in_list_context = False
-                list_line_idx = -1
                 for j in range(max(0, i-5), i):
-                    if re.match(r'^\s*\d+[\.\)]\s+|^\s*[-*+]\s+', lines[j]):
+                    # Check for ordered or unordered list markers
+                    if re.match(r'^\s*[-*+]\s+|^\s*\d+[.)]\s+', lines[j]):
                         in_list_context = True
-                        list_line_idx = j
                         break
                 
                 if in_list_context:
-                    # Add a blank line before the code block if not already present
-                    if i > 0 and lines[i-1].strip():
+                    # Add a blank line before the code block if the previous line is not empty
+                    if i > 0 and fixed_lines and fixed_lines[-1].strip():
                         fixed_lines.append('')
                     
-                    # Keep original indentation for the code block
-                    fixed_lines.append(line)
+                    # Remove leading spaces from the opening ```
+                    fixed_lines.append(line[spaces_to_remove:] if len(line) >= spaces_to_remove else line)
                     i += 1
                     
                     # Process all lines until closing ```
                     while i < len(lines):
                         current_line = lines[i]
-                        fixed_lines.append(current_line)
                         
-                        # Check for closing ```
+                        # Check for closing ``` (with any indentation)
                         if re.match(r'^\s*```\s*$', current_line):
+                            # Remove the same amount of spaces from closing ```
+                            if current_line.startswith(' ' * spaces_to_remove):
+                                fixed_lines.append(current_line[spaces_to_remove:])
+                            else:
+                                fixed_lines.append(current_line.lstrip())
                             i += 1
-                            # Add blank line after code block if needed
-                            if i < len(lines) and lines[i].strip() and not re.match(r'^\s*\d+[\.\)]\s+|^\s*[-*+]\s+', lines[i]):
-                                fixed_lines.append('')
                             break
-                        i += 1
+                        else:
+                            # Remove the same amount of leading spaces from content lines
+                            # but preserve any additional indentation
+                            if len(current_line) >= spaces_to_remove and current_line[:spaces_to_remove] == ' ' * spaces_to_remove:
+                                fixed_lines.append(current_line[spaces_to_remove:])
+                            else:
+                                # If line has fewer spaces or doesn't start with spaces, keep as is
+                                fixed_lines.append(current_line)
+                            i += 1
                     continue
                 
             fixed_lines.append(line)
@@ -304,21 +320,21 @@ class LaTeXPreprocessor(Preprocessor):
         return text
 
 
-class LaTeXExtension(Extension):
-    """Extension to add LaTeX preprocessing."""
-    
-    def extendMarkdown(self, md):
-        md.preprocessors.register(LaTeXPreprocessor(md), 'latex_fix', 25)
-
 
 class MarkdownConverter:
     """Main converter class for Markdown to HTML conversion."""
     
-    def __init__(self, cache_dir: Path = None):
+    def __init__(self, cache_dir: Path = None, debug: bool = False):
         self.cache_dir = cache_dir or Path('cache')
         self.cache_dir.mkdir(exist_ok=True)
         self.cache_file = self.cache_dir / 'conversion_cache.json'
         self.cache = self._load_cache()
+        self.debug = debug
+        
+        # Create debug directory if debug mode is enabled
+        if self.debug:
+            self.debug_dir = Path('debug_markdown')
+            self.debug_dir.mkdir(exist_ok=True)
         
         # Initialize markdown with extensions
         self.md = markdown.Markdown(extensions=[
@@ -327,7 +343,6 @@ class MarkdownConverter:
             'toc',  # table of contents
             'sane_lists',  # better list handling
             'md_in_html',  # process markdown inside HTML blocks
-            LaTeXExtension(),  # our custom LaTeX handler
         ])
     
     def _load_cache(self) -> Dict:
@@ -462,9 +477,22 @@ class MarkdownConverter:
             with open(input_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
+            # Run preprocessor to fix markdown issues
+            preprocessor = LaTeXPreprocessor(None)
+            preprocessed_lines = preprocessor.run(content.split('\n'))
+            preprocessed_content = '\n'.join(preprocessed_lines)
+            
+            # If debug mode is enabled, save preprocessed markdown
+            if self.debug:
+                # Save to debug directory
+                debug_file = self.debug_dir / f"{input_file.stem}_preprocessed.md"
+                debug_file.write_text(preprocessed_content, encoding='utf-8')
+                print(f"Debug: Saved preprocessed markdown to {debug_file}")
+            
             # Reset markdown instance to clear any state
             self.md.reset()
-            content_html = self.md.convert(content)
+            # Use preprocessed content for conversion
+            content_html = self.md.convert(preprocessed_content)
             
             # Cache the result
             self.cache[cache_key] = {
@@ -1044,13 +1072,14 @@ def main():
     parser.add_argument('input', help='Input directory or file')
     parser.add_argument('output', help='Output directory')
     parser.add_argument('--clear-cache', action='store_true', help='Clear cache before conversion')
+    parser.add_argument('--debug', action='store_true', help='Save preprocessed markdown files for debugging')
     
     args = parser.parse_args()
     
     input_path = Path(args.input)
     output_path = Path(args.output)
     
-    converter = MarkdownConverter()
+    converter = MarkdownConverter(debug=args.debug)
     
     if args.clear_cache:
         converter.clear_cache()
