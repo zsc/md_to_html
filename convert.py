@@ -107,13 +107,16 @@ class LaTeXPreprocessor:
         return '\n'.join(lines)
     
     def _escape_underscores_in_latex(self, text):
-        """Escape underscores and protect stars and backslashes within LaTeX expressions."""
+        """Escape underscores and protect stars, backslashes, and braces within LaTeX expressions."""
         # Handle display math $$...$$
         def escape_in_display(match):
             content = match.group(1)
             # First, protect double backslashes in LaTeX (like \\ for line breaks in matrices)
             # We need to double them so markdown doesn't eat them
             content = content.replace('\\\\', '\\\\\\\\')
+            # Protect curly braces in LaTeX (like \{ and \})
+            content = content.replace('\\{', '\\\\{')
+            content = content.replace('\\}', '\\\\}')
             # Only escape underscores that aren't already escaped
             # Replace _ with \_ but not \_ with \\_
             content = re.sub(r'(?<!\\)_', r'\\_', content)
@@ -129,6 +132,9 @@ class LaTeXPreprocessor:
                 return match.group(0)
             # First, protect double backslashes in LaTeX
             content = content.replace('\\\\', '\\\\\\\\')
+            # Protect curly braces in LaTeX
+            content = content.replace('\\{', '\\\\{')
+            content = content.replace('\\}', '\\\\}')
             # Only escape underscores that aren't already escaped
             content = re.sub(r'(?<!\\)_', r'\\_', content)
             # Also protect stars from being interpreted as markdown
