@@ -107,10 +107,13 @@ class LaTeXPreprocessor:
         return '\n'.join(lines)
     
     def _escape_underscores_in_latex(self, text):
-        """Escape underscores and protect stars within LaTeX expressions."""
+        """Escape underscores and protect stars and backslashes within LaTeX expressions."""
         # Handle display math $$...$$
         def escape_in_display(match):
             content = match.group(1)
+            # First, protect double backslashes in LaTeX (like \\ for line breaks in matrices)
+            # We need to double them so markdown doesn't eat them
+            content = content.replace('\\\\', '\\\\\\\\')
             # Only escape underscores that aren't already escaped
             # Replace _ with \_ but not \_ with \\_
             content = re.sub(r'(?<!\\)_', r'\\_', content)
@@ -124,6 +127,8 @@ class LaTeXPreprocessor:
             # Avoid matching display math that we've already processed
             if content.startswith('$'):
                 return match.group(0)
+            # First, protect double backslashes in LaTeX
+            content = content.replace('\\\\', '\\\\\\\\')
             # Only escape underscores that aren't already escaped
             content = re.sub(r'(?<!\\)_', r'\\_', content)
             # Also protect stars from being interpreted as markdown
@@ -548,14 +553,14 @@ class MarkdownConverter:
                 inlineMath: [['$', '$']],
                 displayMath: [['$$', '$$']],
                 processEscapes: false,
-                packages: {{'[+]': ['noerrors']}}
+                packages: {{'[+]': ['noerrors', 'ams']}}
             }},
             options: {{
                 ignoreHtmlClass: 'tex2jax_ignore',
                 processHtmlClass: 'tex2jax_process'
             }},
             loader: {{
-                load: ['[tex]/noerrors']
+                load: ['[tex]/noerrors', '[tex]/ams']
             }}
         }};
     </script>
