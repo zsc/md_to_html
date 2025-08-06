@@ -99,13 +99,15 @@ class LaTeXPreprocessor(Preprocessor):
         return '\n'.join(lines)
     
     def _escape_underscores_in_latex(self, text):
-        """Escape underscores within LaTeX expressions."""
+        """Escape underscores and protect stars within LaTeX expressions."""
         # Handle display math $$...$$
         def escape_in_display(match):
             content = match.group(1)
             # Only escape underscores that aren't already escaped
             # Replace _ with \_ but not \_ with \\_
             content = re.sub(r'(?<!\\)_', r'\\_', content)
+            # Also protect stars from being interpreted as markdown
+            content = re.sub(r'(?<!\\)\*', r'\\*', content)
             return f'$${content}$$'
         
         # Handle inline math $...$
@@ -116,6 +118,8 @@ class LaTeXPreprocessor(Preprocessor):
                 return match.group(0)
             # Only escape underscores that aren't already escaped
             content = re.sub(r'(?<!\\)_', r'\\_', content)
+            # Also protect stars from being interpreted as markdown
+            content = re.sub(r'(?<!\\)\*', r'\\*', content)
             return f'${content}$'
         
         # Process display math first
@@ -180,56 +184,51 @@ class LaTeXPreprocessor(Preprocessor):
         return '\n'.join(new_lines)
     
     def _fix_code_blocks_in_lists(self, text):
-        """Fix code blocks that are inside lists by ensuring proper indentation."""
+        """Fix code blocks that are inside lists by adding blank lines."""
         lines = text.split('\n')
         fixed_lines = []
         i = 0
-        processed = False
         
         while i < len(lines):
             line = lines[i]
             
             # Check if this line starts with spaces followed by ```
-            if re.match(r'^(\s+)```', line) and not processed:
+            if re.match(r'^(\s+)```', line):
                 indent_match = re.match(r'^(\s+)', line)
                 current_indent = len(indent_match.group(1))
                 
-                # For markdown, code blocks in lists need to be indented by 8 spaces (or 2 tabs)
-                # to be recognized as code blocks rather than continuation of the list item
-                if current_indent >= 4 and current_indent < 8:
-                    # This might be a code block in a list that needs more indentation
-                    # Look back to see if we're in a list context
-                    in_list_context = False
-                    for j in range(max(0, i-5), i):
-                        if re.match(r'^(\s*)[-*+\d]+[\.\)]\s+', lines[j]):
-                            in_list_context = True
-                            break
+                # Check if we're in a list context by looking back
+                in_list_context = False
+                list_line_idx = -1
+                for j in range(max(0, i-5), i):
+                    if re.match(r'^\s*\d+[\.\)]\s+|^\s*[-*+]\s+', lines[j]):
+                        in_list_context = True
+                        list_line_idx = j
+                        break
+                
+                if in_list_context:
+                    # Add a blank line before the code block if not already present
+                    if i > 0 and lines[i-1].strip():
+                        fixed_lines.append('')
                     
-                    if in_list_context:
-                        # We're in a list, need to indent to 8 spaces total
-                        spaces_to_add = 8 - current_indent
-                        fixed_lines.append(' ' * spaces_to_add + line)
-                        i += 1
-                        processed = True
+                    # Keep original indentation for the code block
+                    fixed_lines.append(line)
+                    i += 1
+                    
+                    # Process all lines until closing ```
+                    while i < len(lines):
+                        current_line = lines[i]
+                        fixed_lines.append(current_line)
                         
-                        # Process code block content
-                        while i < len(lines):
-                            current_line = lines[i]
-                            # Check if this is a closing ``` with similar indentation
-                            if re.match(r'^(\s+)```\s*$', current_line):
-                                # Add proper indentation to closing ```
-                                fixed_lines.append(' ' * 8 + '```')
-                                i += 1
-                                break
-                            else:
-                                # Indent content lines
-                                if current_line.strip():
-                                    fixed_lines.append(' ' * spaces_to_add + current_line)
-                                else:
-                                    fixed_lines.append('')
-                                i += 1
-                        processed = False
-                        continue
+                        # Check for closing ```
+                        if re.match(r'^\s*```\s*$', current_line):
+                            i += 1
+                            # Add blank line after code block if needed
+                            if i < len(lines) and lines[i].strip() and not re.match(r'^\s*\d+[\.\)]\s+|^\s*[-*+]\s+', lines[i]):
+                                fixed_lines.append('')
+                            break
+                        i += 1
+                    continue
                 
             fixed_lines.append(line)
             i += 1
