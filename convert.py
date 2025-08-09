@@ -548,10 +548,11 @@ class MarkdownConverter:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base href="{asset_prefix}">
     <title>{title}</title>
-    <link rel="stylesheet" href="{asset_prefix}assets/style.css">
-    <link rel="stylesheet" href="{asset_prefix}assets/highlight.css">
-    <script src="{asset_prefix}assets/script.js" defer></script>
+    <link rel="stylesheet" href="assets/style.css">
+    <link rel="stylesheet" href="assets/highlight.css">
+    <script src="assets/script.js" defer></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>
         window.MathJax = {{
@@ -602,13 +603,8 @@ class MarkdownConverter:
         for file_info in nav['files']:
             # For navigation, we want relative paths from root
             path = file_info['path'].replace('.md', '.html')
-            # Remove any directory prefix for files in root
-            if '/' not in path:
-                nav_path = path
-            else:
-                nav_path = path
             active = 'active' if file_info['active'] else ''
-            items.append(f'<li class="{active}"><a href="{asset_prefix}{nav_path}">{file_info["title"]}</a></li>')
+            items.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
         
         return f'<ul class="nav-list">{"".join(items)}</ul>'
     
@@ -619,21 +615,30 @@ class MarkdownConverter:
         
         if nav['prev']:
             path = nav['prev']['path'].replace('.md', '.html')
-            prev_html = f'<a href="{asset_prefix}{path}" class="nav-link prev">← {nav["prev"]["title"]}</a>'
+            prev_html = f'<a href="{path}" class="nav-link prev">← {nav["prev"]["title"]}</a>'
         
         if nav['next']:
             path = nav['next']['path'].replace('.md', '.html')
-            next_html = f'<a href="{asset_prefix}{path}" class="nav-link next">{nav["next"]["title"]} →</a>'
+            next_html = f'<a href="{path}" class="nav-link next">{nav["next"]["title"]} →</a>'
         
         return f'<nav class="page-nav">{prev_html}{next_html}</nav>'
     
-    def convert_directory(self, input_dir: Path, output_dir: Path, use_cache: bool = True):
+    def convert_directory(self, input_dir: Path, output_dir: Path, use_cache: bool = True, filter_pattern: str = None):
         """Convert all markdown files in a directory."""
         # Find all markdown files
-        md_files = list(input_dir.rglob('*.md'))
+        if filter_pattern:
+            md_files = list(input_dir.glob(filter_pattern))
+            # Also filter to ensure they are actually .md files
+            md_files = [f for f in md_files if f.suffix == '.md' and f.is_file()]
+            print(f"Using filter pattern: {filter_pattern}")
+        else:
+            md_files = list(input_dir.rglob('*.md'))
         
         if not md_files:
-            print(f"No markdown files found in {input_dir}")
+            if filter_pattern:
+                print(f"No markdown files found in {input_dir} matching pattern '{filter_pattern}'")
+            else:
+                print(f"No markdown files found in {input_dir}")
             return
         
         print(f"Found {len(md_files)} markdown files")
@@ -1084,6 +1089,7 @@ def main():
     parser.add_argument('output', help='Output directory')
     parser.add_argument('--clear-cache', action='store_true', help='Clear cache before conversion')
     parser.add_argument('--debug', action='store_true', help='Save preprocessed markdown files for debugging')
+    parser.add_argument('--filter', help='Glob pattern to filter files (e.g., "**/*_zh.md")')
     
     args = parser.parse_args()
     
@@ -1101,7 +1107,7 @@ def main():
         converter.convert_file(input_path, output_file, [input_path])
     elif input_path.is_dir():
         # Directory conversion
-        converter.convert_directory(input_path, output_path)
+        converter.convert_directory(input_path, output_path, filter_pattern=args.filter)
     else:
         print(f"Error: {input_path} is not a valid file or directory")
         sys.exit(1)
