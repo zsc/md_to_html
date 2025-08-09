@@ -428,7 +428,8 @@ class MarkdownConverter:
             'current': str(current_file),
             'files': [],
             'prev': None,
-            'next': None
+            'next': None,
+            'use_tree': False  # Flag to determine tree vs flat layout
         }
         
         # Sort files for consistent ordering
@@ -440,15 +441,28 @@ class MarkdownConverter:
             while not f.is_relative_to(input_dir):
                 input_dir = input_dir.parent
         
+        # Check if we should use tree structure
+        # Criteria: more than 10 files OR files in multiple directories
+        unique_dirs = set()
+        for f in sorted_files:
+            rel_path = f.relative_to(input_dir)
+            if len(rel_path.parts) > 1:  # File is in a subdirectory
+                unique_dirs.add(rel_path.parent)
+        
+        # Use tree if many files or multiple directories
+        nav['use_tree'] = len(sorted_files) > 10 or len(unique_dirs) > 0
+        
         # Build file list with titles
         for f in sorted_files:
             with open(f, 'r', encoding='utf-8') as file:
                 content = file.read()
                 title = self._extract_title(content)
+                rel_path = f.relative_to(input_dir)
                 nav['files'].append({
-                    'path': str(f.relative_to(input_dir)),
+                    'path': str(rel_path),
                     'title': title,
-                    'active': f == current_file
+                    'active': f == current_file,
+                    'directory': str(rel_path.parent) if len(rel_path.parts) > 1 else None
                 })
         
         # Find prev/next
@@ -583,6 +597,10 @@ class MarkdownConverter:
                     <span></span>
                 </button>
             </div>
+            <div class="sidebar-search">
+                <input type="text" id="sidebar-search-input" placeholder="搜索..." autocomplete="off">
+                <span class="search-clear" id="search-clear">✕</span>
+            </div>
             {nav_html}
         </nav>
         
@@ -599,14 +617,67 @@ class MarkdownConverter:
     
     def _generate_nav_html(self, nav: Dict, asset_prefix: str) -> str:
         """Generate navigation HTML."""
-        items = []
+        if not nav.get('use_tree', False):
+            # Flat list for few items or single directory
+            items = []
+            for file_info in nav['files']:
+                path = file_info['path'].replace('.md', '.html')
+                active = 'active' if file_info['active'] else ''
+                items.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
+            
+            return f'<ul class="nav-list">{"".join(items)}</ul>'
+        else:
+            # Tree structure for many items or multiple directories
+            return self._generate_tree_nav_html(nav, asset_prefix)
+    
+    def _generate_tree_nav_html(self, nav: Dict, asset_prefix: str) -> str:
+        """Generate tree-structured navigation HTML."""
+        from collections import defaultdict
+        
+        # Group files by directory
+        tree = defaultdict(list)
+        root_files = []
+        
         for file_info in nav['files']:
-            # For navigation, we want relative paths from root
+            if file_info['directory'] and file_info['directory'] != '.':
+                # File in subdirectory
+                tree[file_info['directory']].append(file_info)
+            else:
+                # File in root directory
+                root_files.append(file_info)
+        
+        html_parts = ['<ul class="nav-list nav-tree">']
+        
+        # Add root files first
+        for file_info in root_files:
             path = file_info['path'].replace('.md', '.html')
             active = 'active' if file_info['active'] else ''
-            items.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
+            html_parts.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
         
-        return f'<ul class="nav-list">{"".join(items)}</ul>'
+        # Add directories with their files
+        for directory in sorted(tree.keys()):
+            dir_files = tree[directory]
+            # Check if any file in this directory is active
+            dir_has_active = any(f['active'] for f in dir_files)
+            expanded_class = 'expanded' if dir_has_active else ''
+            
+            html_parts.append(f'<li class="nav-directory {expanded_class}">')
+            html_parts.append(f'<span class="nav-directory-toggle">')
+            html_parts.append(f'<span class="toggle-icon">▶</span>')
+            html_parts.append(f'<span class="directory-name">{directory}</span>')
+            html_parts.append('</span>')
+            html_parts.append('<ul class="nav-subdirectory">')
+            
+            for file_info in dir_files:
+                path = file_info['path'].replace('.md', '.html')
+                active = 'active' if file_info['active'] else ''
+                html_parts.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
+            
+            html_parts.append('</ul>')
+            html_parts.append('</li>')
+        
+        html_parts.append('</ul>')
+        return ''.join(html_parts)
     
     def _generate_prev_next_html(self, nav: Dict, asset_prefix: str) -> str:
         """Generate previous/next navigation HTML."""
@@ -738,6 +809,56 @@ body {
     font-size: 1.2rem;
 }
 
+/* Search input styles */
+.sidebar-search {
+    position: relative;
+    margin-bottom: 20px;
+}
+
+#sidebar-search-input {
+    width: 100%;
+    padding: 8px 30px 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 14px;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    transition: border-color 0.2s;
+}
+
+#sidebar-search-input:focus {
+    outline: none;
+    border-color: var(--secondary-color);
+}
+
+.search-clear {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: #999;
+    font-size: 18px;
+    display: none;
+    user-select: none;
+    padding: 4px;
+}
+
+.search-clear:hover {
+    color: var(--text-color);
+}
+
+.no-results {
+    padding: 12px;
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+    border: 1px dashed var(--border-color);
+    border-radius: 4px;
+    margin-bottom: 20px;
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
 .sidebar-toggle {
     display: none;
     background: none;
@@ -783,6 +904,68 @@ body {
 .nav-list .active a {
     background-color: var(--secondary-color);
     color: white;
+}
+
+/* Tree navigation styles */
+.nav-tree {
+    padding-left: 0;
+}
+
+.nav-directory {
+    list-style: none;
+    margin-bottom: 4px;
+}
+
+.nav-directory-toggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 4px;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.nav-directory-toggle:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.toggle-icon {
+    display: inline-block;
+    width: 16px;
+    margin-right: 6px;
+    transition: transform 0.2s;
+    font-size: 12px;
+}
+
+.nav-directory.expanded .toggle-icon {
+    transform: rotate(90deg);
+}
+
+.directory-name {
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.nav-subdirectory {
+    list-style: none;
+    margin-left: 22px;
+    padding-left: 0;
+    display: none;
+    margin-top: 4px;
+}
+
+.nav-directory.expanded .nav-subdirectory {
+    display: block;
+}
+
+.nav-subdirectory li {
+    margin-bottom: 4px;
+}
+
+.nav-subdirectory a {
+    padding: 6px 10px;
+    font-size: 14px;
 }
 
 /* Main content */
@@ -1008,6 +1191,140 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
+    
+    // Tree navigation toggle functionality
+    const navDirectories = document.querySelectorAll('.nav-directory-toggle');
+    navDirectories.forEach(toggle => {
+        toggle.addEventListener('click', function() {
+            const directory = this.parentElement;
+            directory.classList.toggle('expanded');
+        });
+    });
+    
+    // Instant search functionality
+    const searchInput = document.getElementById('sidebar-search-input');
+    const searchClear = document.getElementById('search-clear');
+    const navList = document.querySelector('.nav-list');
+    const isTreeNav = navList && navList.classList.contains('nav-tree');
+    
+    function performSearch() {
+        const searchTerm = searchInput.value.toLowerCase().trim();
+        let visibleCount = 0;
+        
+        // Show/hide clear button
+        searchClear.style.display = searchTerm ? 'block' : 'none';
+        
+        if (isTreeNav) {
+            // Tree navigation search
+            const allItems = navList.querySelectorAll('li:not(.nav-directory)');
+            const directories = navList.querySelectorAll('.nav-directory');
+            
+            // Search through all file items
+            allItems.forEach(item => {
+                const link = item.querySelector('a');
+                const text = link ? link.textContent.toLowerCase() : '';
+                
+                if (!searchTerm || text.includes(searchTerm)) {
+                    item.style.display = '';
+                    visibleCount++;
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+            
+            // Show/hide directories based on their content visibility
+            directories.forEach(dir => {
+                const subItems = dir.querySelectorAll('.nav-subdirectory li');
+                let hasVisibleItems = false;
+                
+                subItems.forEach(item => {
+                    const link = item.querySelector('a');
+                    const text = link ? link.textContent.toLowerCase() : '';
+                    
+                    if (!searchTerm || text.includes(searchTerm)) {
+                        item.style.display = '';
+                        hasVisibleItems = true;
+                        visibleCount++;
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+                
+                // Show directory if it has visible items, expand it during search
+                if (hasVisibleItems || !searchTerm) {
+                    dir.style.display = '';
+                    if (searchTerm) {
+                        dir.classList.add('expanded');
+                    }
+                } else {
+                    dir.style.display = 'none';
+                }
+            });
+        } else {
+            // Flat navigation search
+            const navItems = navList ? navList.querySelectorAll('li') : [];
+            navItems.forEach(item => {
+                const link = item.querySelector('a');
+                const text = link ? link.textContent.toLowerCase() : '';
+                
+                if (!searchTerm || text.includes(searchTerm)) {
+                    item.style.display = '';
+                    visibleCount++;
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+        
+        // Show a message if no results found
+        let noResultsMsg = document.getElementById('no-search-results');
+        if (searchTerm && visibleCount === 0) {
+            if (!noResultsMsg) {
+                noResultsMsg = document.createElement('div');
+                noResultsMsg.id = 'no-search-results';
+                noResultsMsg.className = 'no-results';
+                noResultsMsg.textContent = '没有找到匹配的结果';
+                navList.parentNode.insertBefore(noResultsMsg, navList);
+            }
+            noResultsMsg.style.display = 'block';
+        } else if (noResultsMsg) {
+            noResultsMsg.style.display = 'none';
+        }
+        
+        // Restore original expanded state when search is cleared
+        if (!searchTerm && isTreeNav) {
+            const directories = navList.querySelectorAll('.nav-directory');
+            directories.forEach(dir => {
+                // Check if directory contains active item
+                const hasActive = dir.querySelector('.nav-subdirectory .active');
+                if (hasActive) {
+                    dir.classList.add('expanded');
+                } else {
+                    dir.classList.remove('expanded');
+                }
+            });
+        }
+    }
+    
+    if (searchInput) {
+        // Perform search on input
+        searchInput.addEventListener('input', performSearch);
+        
+        // Clear search when clicking X
+        searchClear.addEventListener('click', function() {
+            searchInput.value = '';
+            performSearch();
+            searchInput.focus();
+        });
+        
+        // Clear search with Escape key
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                performSearch();
+            }
+        });
+    }
 });"""
     
     def _get_highlight_css(self) -> str:
