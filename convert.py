@@ -599,9 +599,10 @@ class MarkdownConverter:
             </div>
             <div class="sidebar-search">
                 <input type="text" id="sidebar-search-input" placeholder="搜索..." autocomplete="off">
-                <span class="search-clear" id="search-clear">✕</span>
             </div>
-            {nav_html}
+            <div id="tree-container">
+                {nav_html}
+            </div>
         </nav>
         
         <main class="content">
@@ -631,94 +632,71 @@ class MarkdownConverter:
             return self._generate_tree_nav_html(nav, asset_prefix)
     
     def _generate_tree_nav_html(self, nav: Dict, asset_prefix: str) -> str:
-        """Generate tree-structured navigation HTML."""
-        from collections import defaultdict
+        """Generate pure CSS tree navigation."""
         import os
+        from collections import defaultdict
         
-        # Build a proper tree structure
-        tree = {}
+        # Build tree structure
+        tree = defaultdict(list)
+        root_files = []
         
         for file_info in nav['files']:
             path_parts = file_info['path'].split(os.sep)
-            current_level = tree
+            file_path = file_info['path'].replace('.md', '.html')
             
-            # Build nested structure for directories
-            for i, part in enumerate(path_parts[:-1]):
-                if part not in current_level:
-                    current_level[part] = {'_files': [], '_dirs': {}}
-                current_level = current_level[part]['_dirs']
-            
-            # Add file to its directory
             if len(path_parts) == 1:
-                # Root level file
-                if '_files' not in tree:
-                    tree['_files'] = []
-                tree['_files'].append(file_info)
+                root_files.append(file_info)
             else:
-                # File in subdirectory
-                if '_files' not in current_level:
-                    current_level['_files'] = []
-                current_level['_files'].append(file_info)
+                dir_name = path_parts[0]
+                tree[dir_name].append(file_info)
         
-        def generate_tree_html(node, path_prefix='', level=0):
-            """Recursively generate HTML for tree nodes."""
-            html = []
-            
-            # Add files at this level
-            if '_files' in node:
-                for file_info in node['_files']:
-                    file_path = file_info['path'].replace('.md', '.html')
-                    active = 'active' if file_info['active'] else ''
-                    icon = '📄' if not active else '📝'
-                    html.append(f'<li class="nav-file {active}" data-level="{level}">')
-                    html.append(f'<span class="file-icon">{icon}</span>')
-                    html.append(f'<a href="{file_path}" title="{file_info["title"]}">{file_info["title"]}</a>')
-                    html.append('</li>')
-            
-            # Add subdirectories
-            for dir_name in sorted(key for key in node.keys() if key not in ['_files', '_dirs']):
-                dir_node = node[dir_name]
-                # Check if any file in this directory tree is active
-                # Need to check both _files and nested structure
-                has_active = False
-                if '_files' in dir_node:
-                    has_active = any(f.get('active', False) for f in dir_node['_files'])
-                if not has_active and '_dirs' in dir_node:
-                    has_active = self._has_active_file(dir_node['_dirs'])
-                
-                expanded = 'expanded' if has_active else ''
-                
-                html.append(f'<li class="nav-directory {expanded}" data-level="{level}">')
-                html.append(f'<div class="nav-directory-toggle">')
-                html.append(f'<span class="toggle-icon">▼</span>')
-                html.append(f'<span class="folder-icon">📁</span>')
-                html.append(f'<span class="directory-name">{dir_name}</span>')
-                html.append('</div>')
-                html.append('<ul class="nav-subdirectory">')
-                
-                # Recursively add subdirectory contents
-                subdirectory_content = []
-                if '_dirs' in dir_node and dir_node['_dirs']:
-                    subdirectory_content.extend(generate_tree_html(dir_node['_dirs'], 
-                                                  os.path.join(path_prefix, dir_name), 
-                                                  level + 1))
-                if '_files' in dir_node and dir_node['_files']:
-                    subdirectory_content.extend(generate_tree_html({'_files': dir_node['_files']}, 
-                                                  os.path.join(path_prefix, dir_name), 
-                                                  level + 1))
-                
-                html.extend(subdirectory_content)
-                
-                html.append('</ul>')
-                html.append('</li>')
-            
-            return html
+        html = ['<nav class="tree-nav" role="tree">']
         
-        html_parts = ['<div class="nav-tree-container"><ul class="nav-list nav-tree" role="tree">']
-        html_parts.extend(generate_tree_html(tree))
-        html_parts.append('</ul></div>')
+        # Add root files
+        for file_info in root_files:
+            file_path = file_info['path'].replace('.md', '.html')
+            active_class = 'active' if file_info['active'] else ''
+            html.append(f'''
+                <div class="tree-item {active_class}">
+                    <a href="{file_path}" class="tree-link">
+                        <span class="tree-icon">📄</span>
+                        <span class="tree-title">{file_info['title']}</span>
+                    </a>
+                </div>
+            ''')
         
-        return ''.join(html_parts)
+        # Add directories
+        for dir_name, files in sorted(tree.items()):
+            # Check if directory contains active file
+            has_active = any(f['active'] for f in files)
+            expanded_class = 'expanded' if has_active else ''
+            
+            html.append(f'''
+                <div class="tree-folder {expanded_class}">
+                    <div class="tree-folder-header">
+                        <span class="tree-arrow">▶</span>
+                        <span class="tree-icon">📁</span>
+                        <span class="tree-title">{dir_name}</span>
+                    </div>
+                    <div class="tree-folder-content">
+            ''')
+            
+            for file_info in files:
+                file_path = file_info['path'].replace('.md', '.html')
+                active_class = 'active' if file_info['active'] else ''
+                html.append(f'''
+                    <div class="tree-item {active_class}">
+                        <a href="{file_path}" class="tree-link">
+                            <span class="tree-icon">📄</span>
+                            <span class="tree-title">{file_info['title']}</span>
+                        </a>
+                    </div>
+                ''')
+            
+            html.append('</div></div>')
+        
+        html.append('</nav>')
+        return ''.join(html)
     
     def _has_active_file(self, node):
         """Check if any file in the tree node is active."""
@@ -967,7 +945,146 @@ body {
     color: white;
 }
 
-/* Modern Tree Navigation */
+/* Pure CSS Tree Navigation */
+#tree-container {
+    height: calc(100% - 120px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+}
+
+.tree-nav {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* Tree items */
+.tree-item {
+    margin: 2px 0;
+}
+
+.tree-link {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text-color);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tree-link:hover {
+    background-color: rgba(52, 152, 219, 0.08);
+    transform: translateX(2px);
+}
+
+.tree-item.active .tree-link {
+    background-color: var(--secondary-color);
+    color: white;
+    font-weight: 500;
+}
+
+/* Tree folders */
+.tree-folder {
+    margin: 4px 0;
+}
+
+.tree-folder-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s ease;
+}
+
+.tree-folder-header:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.tree-folder-content {
+    margin-left: 24px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s ease,
+                padding 0.2s ease;
+}
+
+.tree-folder.expanded .tree-folder-content {
+    max-height: 2000px;
+    opacity: 1;
+    padding: 4px 0;
+}
+
+/* Icons and arrows */
+.tree-arrow {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    margin-right: 4px;
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    font-size: 12px;
+    color: #666;
+}
+
+.tree-folder.expanded .tree-arrow {
+    transform: rotate(90deg);
+}
+
+.tree-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin-right: 8px;
+    font-size: 16px;
+}
+
+.tree-folder.expanded .tree-folder-header .tree-icon::before {
+    content: "📂";
+}
+
+.tree-folder:not(.expanded) .tree-folder-header .tree-icon::before {
+    content: "📁";
+}
+
+.tree-title {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Search results highlight */
+.tree-item.search-match,
+.tree-folder.search-match .tree-folder-header {
+    background-color: #fff3cd;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+    .tree-link,
+    .tree-folder-header {
+        min-height: 44px;
+        padding: 12px;
+    }
+    
+    .tree-nav {
+        font-size: 16px;
+    }
+    
+    .tree-icon {
+        width: 24px;
+        height: 24px;
+        font-size: 18px;
+    }
+}
+
+/* Modern Tree Navigation (for legacy non-jstree) */
 .nav-tree-container {
     height: 100%;
     overflow-y: auto;
@@ -1097,11 +1214,13 @@ body {
     padding: 0 0 0 12px;
     overflow: hidden;
     max-height: 0;
-    transition: max-height 0.3s ease;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.2s ease;
 }
 
 .nav-directory.expanded .nav-subdirectory {
-    max-height: 9999px;
+    max-height: none;
+    opacity: 1;
 }
 
 /* Indentation for nested levels */
@@ -1386,9 +1505,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebar-toggle');
     
-    sidebarToggle.addEventListener('click', function() {
-        sidebar.classList.toggle('active');
-    });
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', function() {
+            sidebar.classList.toggle('active');
+        });
+    }
     
     // Close sidebar when clicking outside on mobile
     document.addEventListener('click', function(event) {
@@ -1414,103 +1535,143 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Tree navigation state management
-    const TREE_STATE_KEY = 'nav-tree-state';
-    
-    // Load saved tree state
-    function loadTreeState() {
-        try {
-            const saved = localStorage.getItem(TREE_STATE_KEY);
-            return saved ? JSON.parse(saved) : {};
-        } catch (e) {
-            return {};
-        }
-    }
-    
-    // Save tree state
-    function saveTreeState() {
-        const state = {};
-        document.querySelectorAll('.nav-directory').forEach((dir, index) => {
-            const dirName = dir.querySelector('.directory-name');
-            if (dirName) {
-                state[dirName.textContent] = dir.classList.contains('expanded');
+    // Pure CSS Tree Navigation
+    const treeNav = document.querySelector('.tree-nav');
+    if (treeNav) {
+        const TREE_STATE_KEY = 'tree-nav-state';
+        
+        // Load saved state
+        function loadTreeState() {
+            try {
+                const saved = localStorage.getItem(TREE_STATE_KEY);
+                return saved ? JSON.parse(saved) : {};
+            } catch (e) {
+                return {};
             }
-        });
-        try {
-            localStorage.setItem(TREE_STATE_KEY, JSON.stringify(state));
-        } catch (e) {
-            // Ignore localStorage errors
         }
-    }
-    
-    // Apply saved state
-    function applyTreeState() {
-        const state = loadTreeState();
-        document.querySelectorAll('.nav-directory').forEach(dir => {
-            const dirName = dir.querySelector('.directory-name');
-            if (dirName && state[dirName.textContent] !== undefined) {
-                if (state[dirName.textContent]) {
-                    dir.classList.add('expanded');
-                } else {
-                    dir.classList.remove('expanded');
-                }
+        
+        // Save tree state
+        function saveTreeState() {
+            const state = {};
+            document.querySelectorAll('.tree-folder').forEach(folder => {
+                const title = folder.querySelector('.tree-title').textContent;
+                state[title] = folder.classList.contains('expanded');
+            });
+            try {
+                localStorage.setItem(TREE_STATE_KEY, JSON.stringify(state));
+            } catch (e) {
+                // Ignore localStorage errors
             }
-        });
-    }
-    
-    // Initialize tree state
-    applyTreeState();
-    
-    // Tree navigation toggle functionality
-    const navDirectories = document.querySelectorAll('.nav-directory-toggle');
-    navDirectories.forEach(toggle => {
-        toggle.addEventListener('click', function(e) {
-            e.preventDefault();
-            const directory = this.parentElement;
-            directory.classList.toggle('expanded');
-            saveTreeState();
-            
-            // Smooth animation for mobile
-            if (window.innerWidth <= 768) {
-                const subdirectory = directory.querySelector('.nav-subdirectory');
-                if (subdirectory) {
-                    if (directory.classList.contains('expanded')) {
-                        subdirectory.style.maxHeight = subdirectory.scrollHeight + 'px';
+        }
+        
+        // Apply saved state
+        function applyTreeState() {
+            const state = loadTreeState();
+            document.querySelectorAll('.tree-folder').forEach(folder => {
+                const title = folder.querySelector('.tree-folder-header .tree-title').textContent;
+                // Don't override if folder contains active item
+                const hasActive = folder.querySelector('.tree-item.active');
+                if (!hasActive && state[title] !== undefined) {
+                    if (state[title]) {
+                        folder.classList.add('expanded');
                     } else {
-                        subdirectory.style.maxHeight = '0';
+                        folder.classList.remove('expanded');
                     }
                 }
-            }
+            });
+        }
+        
+        // Initialize state
+        applyTreeState();
+        
+        // Handle folder clicks
+        document.querySelectorAll('.tree-folder-header').forEach(header => {
+            header.addEventListener('click', function(e) {
+                e.preventDefault();
+                const folder = this.parentElement;
+                folder.classList.toggle('expanded');
+                saveTreeState();
+            });
         });
-    });
-    
-    // Double-click to expand/collapse all children
-    navDirectories.forEach(toggle => {
-        toggle.addEventListener('dblclick', function(e) {
-            e.preventDefault();
-            const directory = this.parentElement;
-            const isExpanded = directory.classList.contains('expanded');
-            const allSubDirs = directory.querySelectorAll('.nav-directory');
+        
+        // Search functionality
+        const searchInput = document.getElementById('sidebar-search-input');
+        if (searchInput) {
+            let searchTimeout;
             
-            allSubDirs.forEach(subDir => {
-                if (isExpanded) {
-                    subDir.classList.remove('expanded');
-                } else {
-                    subDir.classList.add('expanded');
+            function performTreeSearch() {
+                const query = searchInput.value.toLowerCase().trim();
+                const items = document.querySelectorAll('.tree-item');
+                const folders = document.querySelectorAll('.tree-folder');
+                
+                // Clear previous matches
+                document.querySelectorAll('.search-match').forEach(el => {
+                    el.classList.remove('search-match');
+                });
+                
+                if (!query) {
+                    // Show all items
+                    items.forEach(item => item.style.display = '');
+                    folders.forEach(folder => folder.style.display = '');
+                    applyTreeState();
+                    return;
                 }
+                
+                // Search and highlight
+                let hasResults = false;
+                items.forEach(item => {
+                    const title = item.querySelector('.tree-title').textContent.toLowerCase();
+                    if (title.includes(query)) {
+                        item.style.display = '';
+                        item.classList.add('search-match');
+                        hasResults = true;
+                        
+                        // Expand parent folders
+                        let parent = item.parentElement;
+                        while (parent && parent !== treeNav) {
+                            if (parent.classList.contains('tree-folder')) {
+                                parent.classList.add('expanded');
+                                parent.style.display = '';
+                            }
+                            parent = parent.parentElement;
+                        }
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+                
+                // Hide empty folders
+                folders.forEach(folder => {
+                    const visibleItems = folder.querySelectorAll('.tree-item:not([style*="none"])');
+                    if (visibleItems.length === 0) {
+                        folder.style.display = 'none';
+                    }
+                });
+            }
+            
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(performTreeSearch, 250);
             });
             
-            saveTreeState();
-        });
-    });
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    this.value = '';
+                    performTreeSearch();
+                }
+            });
+        }
+    }
     
-    // Instant search functionality
-    const searchInput = document.getElementById('sidebar-search-input');
-    const searchClear = document.getElementById('search-clear');
-    const navList = document.querySelector('.nav-list');
-    const isTreeNav = navList && navList.classList.contains('nav-tree');
+    // Legacy flat list search (when jsTree is not used)
+    const navList = document.querySelector('.nav-list:not(.jstree)');
+    const isTreeNav = false; // jsTree handles tree navigation now
     
-    function performSearch() {
+    if (navList && !document.querySelector('#jstree-container ul')) {
+        // Only use legacy search for flat lists
+        const searchInput = document.getElementById('sidebar-search-input');
+        
+        function performSearch() {
         const searchTerm = searchInput.value.toLowerCase().trim();
         let visibleCount = 0;
         
@@ -1621,6 +1782,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 performSearch();
             }
         });
+    }
     }
 });"""
     
