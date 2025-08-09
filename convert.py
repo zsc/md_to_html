@@ -632,60 +632,40 @@ class MarkdownConverter:
             return self._generate_tree_nav_html(nav, asset_prefix)
     
     def _generate_tree_nav_html(self, nav: Dict, asset_prefix: str) -> str:
-        """Generate pure CSS tree navigation."""
+        """Generate pure CSS tree navigation with multi-level support."""
         import os
-        from collections import defaultdict
         
-        # Build tree structure
-        tree = defaultdict(list)
-        root_files = []
-        
-        for file_info in nav['files']:
-            path_parts = file_info['path'].split(os.sep)
-            file_path = file_info['path'].replace('.md', '.html')
-            
-            if len(path_parts) == 1:
-                root_files.append(file_info)
-            else:
-                dir_name = path_parts[0]
-                tree[dir_name].append(file_info)
-        
-        html = ['<nav class="tree-nav" role="tree">']
-        
-        # Add root files
-        for file_info in root_files:
-            file_path = file_info['path'].replace('.md', '.html')
-            active_class = 'active' if file_info['active'] else ''
-            html.append(f'''
-                <div class="tree-item {active_class}">
-                    <a href="{file_path}" class="tree-link">
-                        <span class="tree-icon">📄</span>
-                        <span class="tree-title">{file_info['title']}</span>
-                    </a>
-                </div>
-            ''')
-        
-        # Add directories
-        for dir_name, files in sorted(tree.items()):
-            # Check if directory contains active file
-            has_active = any(f['active'] for f in files)
-            expanded_class = 'expanded' if has_active else ''
-            
-            html.append(f'''
-                <div class="tree-folder {expanded_class}">
-                    <div class="tree-folder-header">
-                        <span class="tree-arrow">▶</span>
-                        <span class="tree-icon">📁</span>
-                        <span class="tree-title">{dir_name}</span>
-                    </div>
-                    <div class="tree-folder-content">
-            ''')
+        def build_tree_structure(files):
+            """Build a nested tree structure from flat file list."""
+            tree = {'_files': [], '_dirs': {}}
             
             for file_info in files:
+                path_parts = file_info['path'].split(os.sep)
+                current = tree
+                
+                # Navigate/create directory structure
+                for i, part in enumerate(path_parts[:-1]):
+                    if part not in current['_dirs']:
+                        current['_dirs'][part] = {'_files': [], '_dirs': {}}
+                    current = current['_dirs'][part]
+                
+                # Add file to appropriate level
+                current['_files'].append(file_info)
+            
+            return tree
+        
+        def generate_tree_html(node, level=0):
+            """Recursively generate HTML for tree nodes."""
+            html_parts = []
+            
+            # Add files at current level
+            for file_info in node.get('_files', []):
                 file_path = file_info['path'].replace('.md', '.html')
                 active_class = 'active' if file_info['active'] else ''
-                html.append(f'''
-                    <div class="tree-item {active_class}">
+                indent_style = f'style="padding-left: {level * 20}px;"' if level > 0 else ''
+                
+                html_parts.append(f'''
+                    <div class="tree-item {active_class}" {indent_style}>
                         <a href="{file_path}" class="tree-link">
                             <span class="tree-icon">📄</span>
                             <span class="tree-title">{file_info['title']}</span>
@@ -693,10 +673,50 @@ class MarkdownConverter:
                     </div>
                 ''')
             
-            html.append('</div></div>')
+            # Add subdirectories
+            for dir_name, dir_node in sorted(node.get('_dirs', {}).items()):
+                # Check if directory contains active file (recursively)
+                has_active = self._has_active_in_tree(dir_node)
+                expanded_class = 'expanded' if has_active else ''
+                indent_style = f'style="padding-left: {level * 20}px;"' if level > 0 else ''
+                
+                html_parts.append(f'''
+                    <div class="tree-folder {expanded_class}" data-level="{level}" {indent_style}>
+                        <div class="tree-folder-header">
+                            <span class="tree-arrow">▶</span>
+                            <span class="tree-icon"></span>
+                            <span class="tree-title">{dir_name}</span>
+                        </div>
+                        <div class="tree-folder-content">
+                ''')
+                
+                # Recursively add subdirectory contents
+                html_parts.extend(generate_tree_html(dir_node, level + 1))
+                
+                html_parts.append('</div></div>')
+            
+            return html_parts
         
+        tree = build_tree_structure(nav['files'])
+        html = ['<nav class="tree-nav" role="tree">']
+        html.extend(generate_tree_html(tree))
         html.append('</nav>')
+        
         return ''.join(html)
+    
+    def _has_active_in_tree(self, node):
+        """Check if tree node contains any active file."""
+        # Check files at current level
+        for file_info in node.get('_files', []):
+            if file_info.get('active', False):
+                return True
+        
+        # Check subdirectories recursively
+        for dir_node in node.get('_dirs', {}).values():
+            if self._has_active_in_tree(dir_node):
+                return True
+        
+        return False
     
     def _has_active_file(self, node):
         """Check if any file in the tree node is active."""
@@ -1044,12 +1064,22 @@ body {
     font-size: 16px;
 }
 
-.tree-folder.expanded .tree-folder-header .tree-icon::before {
-    content: "📂";
+.tree-folder.expanded .tree-folder-header .tree-icon {
+    font-size: 0;
 }
 
-.tree-folder:not(.expanded) .tree-folder-header .tree-icon::before {
+.tree-folder.expanded .tree-folder-header .tree-icon::after {
+    content: "📂";
+    font-size: 16px;
+}
+
+.tree-folder:not(.expanded) .tree-folder-header .tree-icon {
+    font-size: 0;
+}
+
+.tree-folder:not(.expanded) .tree-folder-header .tree-icon::after {
     content: "📁";
+    font-size: 16px;
 }
 
 .tree-title {
@@ -1554,8 +1584,14 @@ document.addEventListener('DOMContentLoaded', function() {
         function saveTreeState() {
             const state = {};
             document.querySelectorAll('.tree-folder').forEach(folder => {
-                const title = folder.querySelector('.tree-title').textContent;
-                state[title] = folder.classList.contains('expanded');
+                const header = folder.querySelector('.tree-folder-header');
+                if (header) {
+                    const title = header.querySelector('.tree-title');
+                    if (title) {
+                        const folderPath = title.textContent.trim();
+                        state[folderPath] = folder.classList.contains('expanded');
+                    }
+                }
             });
             try {
                 localStorage.setItem(TREE_STATE_KEY, JSON.stringify(state));
@@ -1568,21 +1604,34 @@ document.addEventListener('DOMContentLoaded', function() {
         function applyTreeState() {
             const state = loadTreeState();
             document.querySelectorAll('.tree-folder').forEach(folder => {
-                const title = folder.querySelector('.tree-folder-header .tree-title').textContent;
-                // Don't override if folder contains active item
-                const hasActive = folder.querySelector('.tree-item.active');
-                if (!hasActive && state[title] !== undefined) {
-                    if (state[title]) {
-                        folder.classList.add('expanded');
-                    } else {
-                        folder.classList.remove('expanded');
+                const header = folder.querySelector('.tree-folder-header');
+                if (header) {
+                    const title = header.querySelector('.tree-title');
+                    if (title) {
+                        const folderPath = title.textContent.trim();
+                        // Check if folder contains active item
+                        const hasActive = folder.querySelector('.tree-item.active');
+                        
+                        if (hasActive) {
+                            // Always expand folders containing active items
+                            folder.classList.add('expanded');
+                        } else if (state[folderPath] !== undefined) {
+                            // Apply saved state for other folders
+                            if (state[folderPath]) {
+                                folder.classList.add('expanded');
+                            } else {
+                                folder.classList.remove('expanded');
+                            }
+                        }
                     }
                 }
             });
         }
         
-        // Initialize state
-        applyTreeState();
+        // Initialize state on page load
+        setTimeout(() => {
+            applyTreeState();
+        }, 0);
         
         // Handle folder clicks
         document.querySelectorAll('.tree-folder-header').forEach(header => {
