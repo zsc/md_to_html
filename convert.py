@@ -633,51 +633,112 @@ class MarkdownConverter:
     def _generate_tree_nav_html(self, nav: Dict, asset_prefix: str) -> str:
         """Generate tree-structured navigation HTML."""
         from collections import defaultdict
+        import os
         
-        # Group files by directory
-        tree = defaultdict(list)
-        root_files = []
+        # Build a proper tree structure
+        tree = {}
         
         for file_info in nav['files']:
-            if file_info['directory'] and file_info['directory'] != '.':
-                # File in subdirectory
-                tree[file_info['directory']].append(file_info)
+            path_parts = file_info['path'].split(os.sep)
+            current_level = tree
+            
+            # Build nested structure for directories
+            for i, part in enumerate(path_parts[:-1]):
+                if part not in current_level:
+                    current_level[part] = {'_files': [], '_dirs': {}}
+                current_level = current_level[part]['_dirs']
+            
+            # Add file to its directory
+            if len(path_parts) == 1:
+                # Root level file
+                if '_files' not in tree:
+                    tree['_files'] = []
+                tree['_files'].append(file_info)
             else:
-                # File in root directory
-                root_files.append(file_info)
+                # File in subdirectory
+                if '_files' not in current_level:
+                    current_level['_files'] = []
+                current_level['_files'].append(file_info)
         
-        html_parts = ['<ul class="nav-list nav-tree">']
-        
-        # Add root files first
-        for file_info in root_files:
-            path = file_info['path'].replace('.md', '.html')
-            active = 'active' if file_info['active'] else ''
-            html_parts.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
-        
-        # Add directories with their files
-        for directory in sorted(tree.keys()):
-            dir_files = tree[directory]
-            # Check if any file in this directory is active
-            dir_has_active = any(f['active'] for f in dir_files)
-            expanded_class = 'expanded' if dir_has_active else ''
+        def generate_tree_html(node, path_prefix='', level=0):
+            """Recursively generate HTML for tree nodes."""
+            html = []
             
-            html_parts.append(f'<li class="nav-directory {expanded_class}">')
-            html_parts.append(f'<span class="nav-directory-toggle">')
-            html_parts.append(f'<span class="toggle-icon">▶</span>')
-            html_parts.append(f'<span class="directory-name">{directory}</span>')
-            html_parts.append('</span>')
-            html_parts.append('<ul class="nav-subdirectory">')
+            # Add files at this level
+            if '_files' in node:
+                for file_info in node['_files']:
+                    file_path = file_info['path'].replace('.md', '.html')
+                    active = 'active' if file_info['active'] else ''
+                    icon = '📄' if not active else '📝'
+                    html.append(f'<li class="nav-file {active}" data-level="{level}">')
+                    html.append(f'<span class="file-icon">{icon}</span>')
+                    html.append(f'<a href="{file_path}" title="{file_info["title"]}">{file_info["title"]}</a>')
+                    html.append('</li>')
             
-            for file_info in dir_files:
-                path = file_info['path'].replace('.md', '.html')
-                active = 'active' if file_info['active'] else ''
-                html_parts.append(f'<li class="{active}"><a href="{path}">{file_info["title"]}</a></li>')
+            # Add subdirectories
+            for dir_name in sorted(key for key in node.keys() if key not in ['_files', '_dirs']):
+                dir_node = node[dir_name]
+                # Check if any file in this directory tree is active
+                # Need to check both _files and nested structure
+                has_active = False
+                if '_files' in dir_node:
+                    has_active = any(f.get('active', False) for f in dir_node['_files'])
+                if not has_active and '_dirs' in dir_node:
+                    has_active = self._has_active_file(dir_node['_dirs'])
+                
+                expanded = 'expanded' if has_active else ''
+                
+                html.append(f'<li class="nav-directory {expanded}" data-level="{level}">')
+                html.append(f'<div class="nav-directory-toggle">')
+                html.append(f'<span class="toggle-icon">▼</span>')
+                html.append(f'<span class="folder-icon">📁</span>')
+                html.append(f'<span class="directory-name">{dir_name}</span>')
+                html.append('</div>')
+                html.append('<ul class="nav-subdirectory">')
+                
+                # Recursively add subdirectory contents
+                subdirectory_content = []
+                if '_dirs' in dir_node and dir_node['_dirs']:
+                    subdirectory_content.extend(generate_tree_html(dir_node['_dirs'], 
+                                                  os.path.join(path_prefix, dir_name), 
+                                                  level + 1))
+                if '_files' in dir_node and dir_node['_files']:
+                    subdirectory_content.extend(generate_tree_html({'_files': dir_node['_files']}, 
+                                                  os.path.join(path_prefix, dir_name), 
+                                                  level + 1))
+                
+                html.extend(subdirectory_content)
+                
+                html.append('</ul>')
+                html.append('</li>')
             
-            html_parts.append('</ul>')
-            html_parts.append('</li>')
+            return html
         
-        html_parts.append('</ul>')
+        html_parts = ['<div class="nav-tree-container"><ul class="nav-list nav-tree" role="tree">']
+        html_parts.extend(generate_tree_html(tree))
+        html_parts.append('</ul></div>')
+        
         return ''.join(html_parts)
+    
+    def _has_active_file(self, node):
+        """Check if any file in the tree node is active."""
+        if isinstance(node, dict):
+            if '_files' in node:
+                for file_info in node['_files']:
+                    if file_info.get('active', False):
+                        return True
+            
+            if '_dirs' in node:
+                for dir_node in node['_dirs'].values():
+                    if self._has_active_file(dir_node):
+                        return True
+            
+            for key, value in node.items():
+                if key not in ['_files', '_dirs'] and isinstance(value, dict):
+                    if self._has_active_file(value):
+                        return True
+        
+        return False
     
     def _generate_prev_next_html(self, nav: Dict, asset_prefix: str) -> str:
         """Generate previous/next navigation HTML."""
@@ -906,66 +967,187 @@ body {
     color: white;
 }
 
-/* Tree navigation styles */
-.nav-tree {
-    padding-left: 0;
+/* Modern Tree Navigation */
+.nav-tree-container {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px;
 }
 
-.nav-directory {
+.nav-tree {
+    padding: 0;
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.nav-tree li {
     list-style: none;
-    margin-bottom: 4px;
+    margin: 0;
+    padding: 0;
+    position: relative;
+}
+
+/* File items */
+.nav-file {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    margin: 1px 0;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.nav-file:hover {
+    background-color: rgba(52, 152, 219, 0.08);
+}
+
+.nav-file.active {
+    background-color: var(--secondary-color);
+    color: white;
+}
+
+.nav-file a {
+    flex: 1;
+    color: inherit;
+    text-decoration: none;
+    padding: 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+}
+
+.nav-file.active a {
+    color: white;
+}
+
+/* Directory items */
+.nav-directory {
+    margin: 2px 0;
 }
 
 .nav-directory-toggle {
     display: flex;
     align-items: center;
-    cursor: pointer;
-    padding: 6px 8px;
+    padding: 4px 8px;
+    margin: 1px 0;
     border-radius: 4px;
+    cursor: pointer;
     user-select: none;
     transition: background-color 0.2s;
+    font-weight: 500;
 }
 
 .nav-directory-toggle:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: rgba(0, 0, 0, 0.04);
 }
 
+/* Icons */
 .toggle-icon {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 16px;
-    margin-right: 6px;
-    transition: transform 0.2s;
-    font-size: 12px;
+    height: 16px;
+    margin-right: 2px;
+    transition: transform 0.2s ease;
+    font-size: 10px;
+    color: #666;
 }
 
 .nav-directory.expanded .toggle-icon {
-    transform: rotate(90deg);
+    transform: rotate(0deg);
+}
+
+.nav-directory:not(.expanded) .toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.folder-icon, .file-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 6px;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.nav-directory.expanded .folder-icon {
+    content: "📂";
 }
 
 .directory-name {
-    font-weight: 600;
+    flex: 1;
+    font-weight: 500;
     color: var(--primary-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
+/* Subdirectory */
 .nav-subdirectory {
     list-style: none;
-    margin-left: 22px;
-    padding-left: 0;
-    display: none;
-    margin-top: 4px;
+    margin: 0;
+    padding: 0 0 0 12px;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.3s ease;
 }
 
 .nav-directory.expanded .nav-subdirectory {
-    display: block;
+    max-height: 9999px;
 }
 
-.nav-subdirectory li {
-    margin-bottom: 4px;
+/* Indentation for nested levels */
+.nav-tree li[data-level="1"] {
+    padding-left: 16px;
 }
 
-.nav-subdirectory a {
-    padding: 6px 10px;
-    font-size: 14px;
+.nav-tree li[data-level="2"] {
+    padding-left: 32px;
+}
+
+.nav-tree li[data-level="3"] {
+    padding-left: 48px;
+}
+
+/* Tree lines (optional, for CHM-like appearance) */
+.nav-tree li::before {
+    content: "";
+    position: absolute;
+    left: 8px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, #ddd 20%, #ddd 80%, transparent);
+}
+
+.nav-tree li[data-level="0"]::before {
+    display: none;
+}
+
+/* Smooth scrollbar */
+.nav-tree-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.nav-tree-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.nav-tree-container::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.nav-tree-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.3);
 }
 
 /* Main content */
@@ -1108,6 +1290,9 @@ blockquote {
     .sidebar {
         transform: translateX(-100%);
         z-index: 1000;
+        width: 85vw;
+        max-width: 350px;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
     }
     
     .sidebar.active {
@@ -1116,6 +1301,15 @@ blockquote {
     
     .sidebar-toggle {
         display: block;
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        z-index: 1001;
+        background: var(--bg-color);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
     }
     
     .content {
@@ -1131,6 +1325,34 @@ blockquote {
     .nav-link {
         width: 100%;
         text-align: center;
+    }
+    
+    /* Larger touch targets for mobile */
+    .nav-file, .nav-directory-toggle {
+        padding: 8px 12px;
+        min-height: 44px;
+    }
+    
+    .toggle-icon, .folder-icon, .file-icon {
+        width: 24px;
+        height: 24px;
+        font-size: 16px;
+    }
+    
+    .nav-tree {
+        font-size: 16px;
+    }
+    
+    /* Overlay when sidebar is open */
+    .sidebar.active::before {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: -1;
     }
     
     h1 { font-size: 1.8em; }
@@ -1192,12 +1414,93 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
+    // Tree navigation state management
+    const TREE_STATE_KEY = 'nav-tree-state';
+    
+    // Load saved tree state
+    function loadTreeState() {
+        try {
+            const saved = localStorage.getItem(TREE_STATE_KEY);
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            return {};
+        }
+    }
+    
+    // Save tree state
+    function saveTreeState() {
+        const state = {};
+        document.querySelectorAll('.nav-directory').forEach((dir, index) => {
+            const dirName = dir.querySelector('.directory-name');
+            if (dirName) {
+                state[dirName.textContent] = dir.classList.contains('expanded');
+            }
+        });
+        try {
+            localStorage.setItem(TREE_STATE_KEY, JSON.stringify(state));
+        } catch (e) {
+            // Ignore localStorage errors
+        }
+    }
+    
+    // Apply saved state
+    function applyTreeState() {
+        const state = loadTreeState();
+        document.querySelectorAll('.nav-directory').forEach(dir => {
+            const dirName = dir.querySelector('.directory-name');
+            if (dirName && state[dirName.textContent] !== undefined) {
+                if (state[dirName.textContent]) {
+                    dir.classList.add('expanded');
+                } else {
+                    dir.classList.remove('expanded');
+                }
+            }
+        });
+    }
+    
+    // Initialize tree state
+    applyTreeState();
+    
     // Tree navigation toggle functionality
     const navDirectories = document.querySelectorAll('.nav-directory-toggle');
     navDirectories.forEach(toggle => {
-        toggle.addEventListener('click', function() {
+        toggle.addEventListener('click', function(e) {
+            e.preventDefault();
             const directory = this.parentElement;
             directory.classList.toggle('expanded');
+            saveTreeState();
+            
+            // Smooth animation for mobile
+            if (window.innerWidth <= 768) {
+                const subdirectory = directory.querySelector('.nav-subdirectory');
+                if (subdirectory) {
+                    if (directory.classList.contains('expanded')) {
+                        subdirectory.style.maxHeight = subdirectory.scrollHeight + 'px';
+                    } else {
+                        subdirectory.style.maxHeight = '0';
+                    }
+                }
+            }
+        });
+    });
+    
+    // Double-click to expand/collapse all children
+    navDirectories.forEach(toggle => {
+        toggle.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            const directory = this.parentElement;
+            const isExpanded = directory.classList.contains('expanded');
+            const allSubDirs = directory.querySelectorAll('.nav-directory');
+            
+            allSubDirs.forEach(subDir => {
+                if (isExpanded) {
+                    subDir.classList.remove('expanded');
+                } else {
+                    subDir.classList.add('expanded');
+                }
+            });
+            
+            saveTreeState();
         });
     });
     
@@ -1215,48 +1518,42 @@ document.addEventListener('DOMContentLoaded', function() {
         searchClear.style.display = searchTerm ? 'block' : 'none';
         
         if (isTreeNav) {
-            // Tree navigation search
-            const allItems = navList.querySelectorAll('li:not(.nav-directory)');
+            // Tree navigation search for new structure
+            const allFiles = navList.querySelectorAll('.nav-file');
             const directories = navList.querySelectorAll('.nav-directory');
             
             // Search through all file items
-            allItems.forEach(item => {
+            allFiles.forEach(item => {
                 const link = item.querySelector('a');
                 const text = link ? link.textContent.toLowerCase() : '';
                 
                 if (!searchTerm || text.includes(searchTerm)) {
                     item.style.display = '';
                     visibleCount++;
+                    // Show all parent directories
+                    let parent = item.parentElement;
+                    while (parent && parent !== navList) {
+                        if (parent.classList.contains('nav-directory')) {
+                            parent.style.display = '';
+                            if (searchTerm) {
+                                parent.classList.add('expanded');
+                            }
+                        }
+                        parent = parent.parentElement;
+                    }
                 } else {
                     item.style.display = 'none';
                 }
             });
             
-            // Show/hide directories based on their content visibility
+            // Handle directories visibility
             directories.forEach(dir => {
-                const subItems = dir.querySelectorAll('.nav-subdirectory li');
-                let hasVisibleItems = false;
+                const hasVisibleFiles = dir.querySelectorAll('.nav-file:not([style*="none"])').length > 0;
+                const hasVisibleSubDirs = dir.querySelectorAll('.nav-directory:not([style*="none"])').length > 0;
                 
-                subItems.forEach(item => {
-                    const link = item.querySelector('a');
-                    const text = link ? link.textContent.toLowerCase() : '';
-                    
-                    if (!searchTerm || text.includes(searchTerm)) {
-                        item.style.display = '';
-                        hasVisibleItems = true;
-                        visibleCount++;
-                    } else {
-                        item.style.display = 'none';
-                    }
-                });
-                
-                // Show directory if it has visible items, expand it during search
-                if (hasVisibleItems || !searchTerm) {
+                if (!searchTerm) {
                     dir.style.display = '';
-                    if (searchTerm) {
-                        dir.classList.add('expanded');
-                    }
-                } else {
+                } else if (!hasVisibleFiles && !hasVisibleSubDirs) {
                     dir.style.display = 'none';
                 }
             });
