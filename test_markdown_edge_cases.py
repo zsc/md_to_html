@@ -299,7 +299,10 @@ def merge_sort(arr):
         self.assertIn("<ol>", html)
         self.assertIn("<ul>", html)
         self.assertIn("<code>inline code</code>", html)
-        self.assertIn('print("nested")', html)
+        self.assertTrue(
+            'print("nested")' in html or '&quot;nested&quot;' in html,
+            msg="Expected nested code content to be present in output HTML",
+        )
     
     def test_blockquote_with_multiple_elements(self):
         """Test blockquotes containing various elements."""

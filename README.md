@@ -104,10 +104,9 @@ The converter generates:
 
 ## Requirements
 
-- Python 3.6+
+- Python 3.9+
 - markdown==3.5.1
 - Pygments==2.17.2
-- requests (for testing)
 
 ## License
 

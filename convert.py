@@ -10,8 +10,8 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
-import shutil
+from typing import List, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import markdown
 
@@ -377,17 +377,28 @@ class MarkdownConverter:
             return hashlib.md5(f.read()).hexdigest()
     
     def _convert_links(self, html: str) -> str:
-        """Convert .md links to .html links."""
-        # Pattern to match markdown links
-        pattern = r'href="([^"]+\.md)(#[^"]+)?"'
-        
-        def replace_link(match):
-            link = match.group(1)
-            anchor = match.group(2) or ''
-            html_link = link[:-3] + '.html'
-            return f'href="{html_link}{anchor}"'
-        
-        return re.sub(pattern, replace_link, html)
+        """Convert relative `.md` hrefs to `.html` hrefs.
+
+        This intentionally avoids touching external links like `https://.../foo.md`.
+        """
+        pattern = r'href=(?P<quote>["\'])(?P<url>[^"\']+)(?P=quote)'
+
+        def replace_href(match: re.Match) -> str:
+            quote = match.group('quote')
+            url = match.group('url')
+
+            parts = urlsplit(url)
+            if parts.scheme or parts.netloc:
+                return match.group(0)
+
+            if not parts.path.lower().endswith('.md'):
+                return match.group(0)
+
+            new_parts = parts._replace(path=f"{parts.path[:-3]}.html")
+            new_url = urlunsplit(new_parts)
+            return f'href={quote}{new_url}{quote}'
+
+        return re.sub(pattern, replace_href, html)
     
     def _extract_title(self, content: str) -> str:
         """Extract title from markdown content."""
@@ -487,7 +498,14 @@ class MarkdownConverter:
         
         return nav
     
-    def convert_file(self, input_file: Path, output_file: Path, all_files: List[Path], use_cache: bool = True) -> bool:
+    def convert_file(
+        self,
+        input_file: Path,
+        output_file: Path,
+        all_files: List[Path],
+        use_cache: bool = True,
+        output_root: Optional[Path] = None,
+    ) -> bool:
         """Convert a single markdown file to HTML."""
         # Check cache
         file_hash = self._get_file_hash(input_file)
@@ -538,7 +556,7 @@ class MarkdownConverter:
         nav = self._build_navigation(input_file, all_files)
         
         # Generate full HTML
-        html = self._generate_html(title, content_html, nav, output_file)
+        html = self._generate_html(title, content_html, nav, output_file, output_root=output_root)
         
         # Write output
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -547,10 +565,21 @@ class MarkdownConverter:
         
         return True
     
-    def _generate_html(self, title: str, content: str, nav: Dict, output_file: Path) -> str:
+    def _generate_html(
+        self,
+        title: str,
+        content: str,
+        nav: Dict,
+        output_file: Path,
+        output_root: Optional[Path] = None,
+    ) -> str:
         """Generate complete HTML with template."""
         # Calculate relative paths for assets
-        depth = len(output_file.parent.parts) - len(Path('output').parts)
+        output_root = output_root or output_file.parent
+        try:
+            depth = len(output_file.parent.resolve().relative_to(output_root.resolve()).parts)
+        except ValueError:
+            depth = 0
         asset_prefix = '../' * depth if depth > 0 else './'
         
         # Adjust navigation paths
@@ -599,6 +628,7 @@ class MarkdownConverter:
             </div>
             <div class="sidebar-search">
                 <input type="text" id="sidebar-search-input" placeholder="搜索..." autocomplete="off">
+                <span id="sidebar-search-clear" class="search-clear" role="button" tabindex="0" aria-label="清除搜索" title="清除">×</span>
             </div>
             <div id="tree-container">
                 {nav_html}
@@ -779,7 +809,7 @@ class MarkdownConverter:
             rel_path = md_file.relative_to(input_dir)
             output_file = output_dir / rel_path.with_suffix('.html')
             
-            self.convert_file(md_file, output_file, md_files, use_cache)
+            self.convert_file(md_file, output_file, md_files, use_cache, output_root=output_dir)
         
         # Copy static assets
         self._copy_assets(output_dir)
@@ -1645,11 +1675,35 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Search functionality
         const searchInput = document.getElementById('sidebar-search-input');
+        const searchClear = document.getElementById('sidebar-search-clear');
         if (searchInput) {
             let searchTimeout;
             
+            function setClearVisible(visible) {
+                if (searchClear) {
+                    searchClear.style.display = visible ? 'block' : 'none';
+                }
+            }
+            
+            function setNoResultsVisible(visible) {
+                let noResultsMsg = document.getElementById('no-search-results');
+                if (visible) {
+                    if (!noResultsMsg) {
+                        noResultsMsg = document.createElement('div');
+                        noResultsMsg.id = 'no-search-results';
+                        noResultsMsg.className = 'no-results';
+                        noResultsMsg.textContent = '没有找到匹配的结果';
+                        treeNav.parentNode.insertBefore(noResultsMsg, treeNav);
+                    }
+                    noResultsMsg.style.display = 'block';
+                } else if (noResultsMsg) {
+                    noResultsMsg.style.display = 'none';
+                }
+            }
+            
             function performTreeSearch() {
                 const query = searchInput.value.toLowerCase().trim();
+                setClearVisible(Boolean(query));
                 const items = document.querySelectorAll('.tree-item');
                 const folders = document.querySelectorAll('.tree-folder');
                 
@@ -1662,6 +1716,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Show all items
                     items.forEach(item => item.style.display = '');
                     folders.forEach(folder => folder.style.display = '');
+                    setNoResultsVisible(false);
                     applyTreeState();
                     return;
                 }
@@ -1669,7 +1724,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Search and highlight
                 let hasResults = false;
                 items.forEach(item => {
-                    const title = item.querySelector('.tree-title').textContent.toLowerCase();
+                    const titleEl = item.querySelector('.tree-title');
+                    const title = titleEl ? titleEl.textContent.toLowerCase() : '';
                     if (title.includes(query)) {
                         item.style.display = '';
                         item.classList.add('search-match');
@@ -1694,14 +1750,20 @@ document.addEventListener('DOMContentLoaded', function() {
                     const visibleItems = folder.querySelectorAll('.tree-item:not([style*="none"])');
                     if (visibleItems.length === 0) {
                         folder.style.display = 'none';
+                    } else {
+                        folder.style.display = '';
                     }
                 });
+                
+                setNoResultsVisible(!hasResults);
             }
             
-            searchInput.addEventListener('input', function() {
+            function scheduleTreeSearch() {
                 clearTimeout(searchTimeout);
                 searchTimeout = setTimeout(performTreeSearch, 250);
-            });
+            }
+            
+            searchInput.addEventListener('input', scheduleTreeSearch);
             
             searchInput.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') {
@@ -1709,129 +1771,106 @@ document.addEventListener('DOMContentLoaded', function() {
                     performTreeSearch();
                 }
             });
-        }
-    }
-    
-    // Legacy flat list search (when jsTree is not used)
-    const navList = document.querySelector('.nav-list:not(.jstree)');
-    const isTreeNav = false; // jsTree handles tree navigation now
-    
-    if (navList && !document.querySelector('#jstree-container ul')) {
-        // Only use legacy search for flat lists
-        const searchInput = document.getElementById('sidebar-search-input');
-        
-        function performSearch() {
-        const searchTerm = searchInput.value.toLowerCase().trim();
-        let visibleCount = 0;
-        
-        // Show/hide clear button
-        searchClear.style.display = searchTerm ? 'block' : 'none';
-        
-        if (isTreeNav) {
-            // Tree navigation search for new structure
-            const allFiles = navList.querySelectorAll('.nav-file');
-            const directories = navList.querySelectorAll('.nav-directory');
             
-            // Search through all file items
-            allFiles.forEach(item => {
-                const link = item.querySelector('a');
-                const text = link ? link.textContent.toLowerCase() : '';
+            if (searchClear) {
+                searchClear.addEventListener('click', function() {
+                    searchInput.value = '';
+                    performTreeSearch();
+                    searchInput.focus();
+                });
                 
-                if (!searchTerm || text.includes(searchTerm)) {
-                    item.style.display = '';
-                    visibleCount++;
-                    // Show all parent directories
-                    let parent = item.parentElement;
-                    while (parent && parent !== navList) {
-                        if (parent.classList.contains('nav-directory')) {
-                            parent.style.display = '';
-                            if (searchTerm) {
-                                parent.classList.add('expanded');
-                            }
-                        }
-                        parent = parent.parentElement;
+                searchClear.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        this.click();
                     }
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-            
-            // Handle directories visibility
-            directories.forEach(dir => {
-                const hasVisibleFiles = dir.querySelectorAll('.nav-file:not([style*="none"])').length > 0;
-                const hasVisibleSubDirs = dir.querySelectorAll('.nav-directory:not([style*="none"])').length > 0;
-                
-                if (!searchTerm) {
-                    dir.style.display = '';
-                } else if (!hasVisibleFiles && !hasVisibleSubDirs) {
-                    dir.style.display = 'none';
-                }
-            });
-        } else {
-            // Flat navigation search
-            const navItems = navList ? navList.querySelectorAll('li') : [];
-            navItems.forEach(item => {
-                const link = item.querySelector('a');
-                const text = link ? link.textContent.toLowerCase() : '';
-                
-                if (!searchTerm || text.includes(searchTerm)) {
-                    item.style.display = '';
-                    visibleCount++;
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-        }
-        
-        // Show a message if no results found
-        let noResultsMsg = document.getElementById('no-search-results');
-        if (searchTerm && visibleCount === 0) {
-            if (!noResultsMsg) {
-                noResultsMsg = document.createElement('div');
-                noResultsMsg.id = 'no-search-results';
-                noResultsMsg.className = 'no-results';
-                noResultsMsg.textContent = '没有找到匹配的结果';
-                navList.parentNode.insertBefore(noResultsMsg, navList);
+                });
             }
-            noResultsMsg.style.display = 'block';
-        } else if (noResultsMsg) {
-            noResultsMsg.style.display = 'none';
-        }
-        
-        // Restore original expanded state when search is cleared
-        if (!searchTerm && isTreeNav) {
-            const directories = navList.querySelectorAll('.nav-directory');
-            directories.forEach(dir => {
-                // Check if directory contains active item
-                const hasActive = dir.querySelector('.nav-subdirectory .active');
-                if (hasActive) {
-                    dir.classList.add('expanded');
-                } else {
-                    dir.classList.remove('expanded');
-                }
-            });
         }
     }
     
-    if (searchInput) {
-        // Perform search on input
-        searchInput.addEventListener('input', performSearch);
+    // Flat navigation search (for small doc sets)
+    const navList = document.querySelector('.nav-list');
+    if (navList) {
+        const searchInput = document.getElementById('sidebar-search-input');
+        const searchClear = document.getElementById('sidebar-search-clear');
         
-        // Clear search when clicking X
-        searchClear.addEventListener('click', function() {
-            searchInput.value = '';
-            performSearch();
-            searchInput.focus();
-        });
-        
-        // Clear search with Escape key
-        searchInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                searchInput.value = '';
-                performSearch();
+        if (searchInput) {
+            let searchTimeout;
+            
+            function setClearVisible(visible) {
+                if (searchClear) {
+                    searchClear.style.display = visible ? 'block' : 'none';
+                }
             }
-        });
-    }
+            
+            function setNoResultsVisible(visible) {
+                let noResultsMsg = document.getElementById('no-search-results');
+                if (visible) {
+                    if (!noResultsMsg) {
+                        noResultsMsg = document.createElement('div');
+                        noResultsMsg.id = 'no-search-results';
+                        noResultsMsg.className = 'no-results';
+                        noResultsMsg.textContent = '没有找到匹配的结果';
+                        navList.parentNode.insertBefore(noResultsMsg, navList);
+                    }
+                    noResultsMsg.style.display = 'block';
+                } else if (noResultsMsg) {
+                    noResultsMsg.style.display = 'none';
+                }
+            }
+            
+            function performFlatSearch() {
+                const query = searchInput.value.toLowerCase().trim();
+                setClearVisible(Boolean(query));
+                
+                let visibleCount = 0;
+                navList.querySelectorAll('li').forEach(item => {
+                    const link = item.querySelector('a');
+                    const text = link ? link.textContent.toLowerCase() : '';
+                    
+                    if (!query || text.includes(query)) {
+                        item.style.display = '';
+                        visibleCount++;
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+                
+                setNoResultsVisible(Boolean(query) && visibleCount === 0);
+            }
+            
+            function scheduleFlatSearch() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(performFlatSearch, 150);
+            }
+            
+            searchInput.addEventListener('input', scheduleFlatSearch);
+            
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    this.value = '';
+                    performFlatSearch();
+                }
+            });
+            
+            if (searchClear) {
+                searchClear.addEventListener('click', function() {
+                    searchInput.value = '';
+                    performFlatSearch();
+                    searchInput.focus();
+                });
+                
+                searchClear.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        this.click();
+                    }
+                });
+            }
+            
+            performFlatSearch();
+        }
     }
 });"""
     
@@ -1929,7 +1968,8 @@ def main():
     if input_path.is_file() and input_path.suffix == '.md':
         # Single file conversion
         output_file = output_path / input_path.name.replace('.md', '.html')
-        converter.convert_file(input_path, output_file, [input_path])
+        converter.convert_file(input_path, output_file, [input_path], output_root=output_path)
+        converter._copy_assets(output_path)
     elif input_path.is_dir():
         # Directory conversion
         converter.convert_directory(input_path, output_path, filter_pattern=args.filter)

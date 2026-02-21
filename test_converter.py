@@ -71,10 +71,16 @@ class TestMarkdownConverter(unittest.TestCase):
     
     def test_convert_links(self):
         """Test markdown link conversion."""
-        html = '<a href="chapter1.md">Chapter 1</a> and <a href="index.md#section">Index</a>'
+        html = (
+            '<a href="chapter1.md">Chapter 1</a> and <a href="index.md#section">Index</a> '
+            'and <a href="https://example.com/readme.md">External</a> '
+            'and <a href="//example.com/proto.md">Proto</a>'
+        )
         result = self.converter._convert_links(html)
         self.assertIn('href="chapter1.html"', result)
         self.assertIn('href="index.html#section"', result)
+        self.assertIn('href="https://example.com/readme.md"', result)
+        self.assertIn('href="//example.com/proto.md"', result)
     
     def test_cache_functionality(self):
         """Test caching mechanism."""

@@ -49,7 +49,10 @@ class HeadlessTests:
         
         # Test sidebar navigation
         await page.goto(f"{self.base_url}/index.html")
-        await page.click('.nav-list a[href="chapter1.html"]')
+        if await page.query_selector('.nav-list a[href="chapter1.html"]'):
+            await page.click('.nav-list a[href="chapter1.html"]')
+        else:
+            await page.click('.tree-link[href="chapter1.html"]')
         await page.wait_for_load_state('networkidle')
         assert page.url.endswith('chapter1.html'), "Sidebar navigation failed"
         
