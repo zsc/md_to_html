@@ -163,21 +163,26 @@ class LaTeXPreprocessor:
             if re.match(r'^(\s*>)?\s*\|[\s\-:|]+\|\s*$', line):
                 # Look back to find the header
                 if i > 0 and '|' in lines[i-1]:
+                    header_line = lines[i - 1]
+
+                    # If the header line was already added in the previous iteration, remove it
+                    # so we can insert any needed blank line *before* the table (not between
+                    # the header and separator).
+                    if new_lines and new_lines[-1] == header_line:
+                        new_lines.pop()
+
                     # Check if we're in a blockquote
-                    in_blockquote = line.strip().startswith('>')
+                    in_blockquote = line.lstrip().startswith('>')
                     
                     # Check if there's already a blank line before the table
                     if i > 1 and new_lines and new_lines[-1].strip():
-                        if in_blockquote and new_lines[-1].startswith('>'):
+                        if in_blockquote and new_lines[-1].lstrip().startswith('>'):
                             new_lines.append('>')  # Add blank blockquote line
                         else:
                             new_lines.append('')  # Add blank line before table
                     
                     # Add the header
-                    if new_lines and new_lines[-1] == lines[i-1]:
-                        pass  # Already added
-                    else:
-                        new_lines.append(lines[i-1])
+                    new_lines.append(header_line)
                     
                     # Add the separator
                     new_lines.append(line)
@@ -190,9 +195,13 @@ class LaTeXPreprocessor:
                     
                     # Add blank line after table if needed
                     if j < len(lines) and lines[j].strip():
-                        new_lines.append('')
+                        if in_blockquote and lines[j].lstrip().startswith('>'):
+                            new_lines.append('>')  # Add blank blockquote line
+                        else:
+                            new_lines.append('')
                     
-                    i = j - 1
+                    i = j
+                    continue
                 else:
                     new_lines.append(line)
             else:

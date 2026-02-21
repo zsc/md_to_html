@@ -47,6 +47,26 @@ class TestTableHandling(unittest.TestCase):
         self.assertIn("<tbody>", html)
         self.assertIn("Column 1", html)
         self.assertIn("Cell 1", html)
+
+    def test_table_header_not_duplicated_as_text(self):
+        """Ensure table header line doesn't appear as raw pipe text in HTML."""
+        content = """# Table Duplicate Header
+
+Intro line.
+| CLI 动词 | 落点（模块） | 备注 |
+|---|---|---|
+| a | b | c |
+"""
+        md_file = self.test_path / "table_dup.md"
+        md_file.write_text(content)
+        output_file = self.test_path / "table_dup.html"
+
+        self.converter.convert_file(md_file, output_file, [md_file])
+
+        html = output_file.read_text()
+        self.assertIn("<table>", html)
+        self.assertIn("CLI 动词", html)
+        self.assertNotRegex(html, r"\|\s*CLI 动词\s*\|")
     
     def test_table_with_alignment(self):
         """Test table with column alignment."""
