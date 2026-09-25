@@ -612,14 +612,14 @@ class MarkdownConverter:
                 inlineMath: [['$', '$']],
                 displayMath: [['$$', '$$']],
                 processEscapes: false,
-                packages: {{'[+]': ['noerrors', 'ams']}}
+                packages: {{'[+]': ['noerrors', 'ams', 'mathtools']}}
             }},
             options: {{
                 ignoreHtmlClass: 'tex2jax_ignore',
                 processHtmlClass: 'tex2jax_process'
             }},
             loader: {{
-                load: ['[tex]/noerrors', '[tex]/ams']
+                load: ['[tex]/noerrors', '[tex]/ams', '[tex]/mathtools']
             }}
         }};
     </script>
